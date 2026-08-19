@@ -407,8 +407,8 @@ export class Share {
   private async copyTextAndNotify(text: string, client?: ClientInfo) {
     let copied = false
     try {
-      await Pasteboard.setString(text)
-      copied = true
+      await this.runInMain(() => Pasteboard.setString(text))
+      copied = (await this.runInMain(() => Pasteboard.getString())) === text
     } catch {
       // 剪贴板权限被拒绝时仍保留聊天消息，并继续尝试通知
     }
@@ -421,10 +421,19 @@ export class Share {
         subtitle: sender,
         body: preview,
         threadIdentifier: "lan-transfer-clipboard",
+        tapAction: "none",
       })
     } catch {
       // 通知权限被拒绝不应影响剪贴板同步和聊天消息
     }
+  }
+
+  private runInMain<T>(operation: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      Thread.runInMain(() => {
+        void operation().then(resolve, reject)
+      })
+    })
   }
 
   /** App 端发送文字：广播给浏览器并返回本地消息 */
