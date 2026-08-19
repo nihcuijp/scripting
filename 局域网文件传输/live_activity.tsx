@@ -30,7 +30,7 @@ export type TransferActivityState = {
 }
 
 function connectedTitle(state: TransferActivityState): string {
-  if (state.deviceCount === 0) return "局域网传输运行中"
+  if (state.deviceCount === 0) return "等待连接"
   if (state.deviceCount === 1) return `${state.primaryName} 已连接`
   return `${state.deviceCount} 台设备已连接`
 }
@@ -44,9 +44,10 @@ function StatusIcon({ online }: { online: boolean }) {
 }
 
 function LockScreenContent(state: TransferActivityState) {
+  const connected = state.deviceCount > 0
   return (
     <HStack spacing={12} padding={16} activityBackgroundTint="rgba(12,16,24,0.96)" foregroundStyle="white">
-      <StatusIcon online={state.online} />
+      <StatusIcon online={connected} />
       <VStack alignment="leading" spacing={3} frame={{ maxWidth: Infinity }}>
         <Text font="headline" fontWeight="semibold">{connectedTitle(state)}</Text>
         <Text font="caption" foregroundStyle="rgba(255,255,255,0.65)" lineLimit={1}>
@@ -64,13 +65,13 @@ function LockScreenContent(state: TransferActivityState) {
 const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
   <LiveActivityUI
     content={<LockScreenContent {...state} />}
-    compactLeading={<StatusIcon online={state.online} />}
-    compactTrailing={<Text font="caption" fontWeight="semibold">{state.online ? `${state.deviceCount}台` : "等待"}</Text>}
-    minimal={<StatusIcon online={state.online} />}>
+    compactLeading={<StatusIcon online={state.deviceCount > 0} />}
+    compactTrailing={<Text font="caption" fontWeight="semibold">{state.deviceCount > 0 ? `${state.deviceCount}台` : "等待"}</Text>}
+    minimal={<StatusIcon online={state.deviceCount > 0} />}>
     <LiveActivityUIExpandedLeading>
       <HStack spacing={7}>
-        <StatusIcon online={state.online} />
-        <Text font="headline" fontWeight="semibold">{state.online ? "已连接" : "等待连接"}</Text>
+        <StatusIcon online={state.deviceCount > 0} />
+        <Text font="headline" fontWeight="semibold">{state.deviceCount > 0 ? "已连接" : "等待连接"}</Text>
       </HStack>
     </LiveActivityUIExpandedLeading>
     <LiveActivityUIExpandedTrailing>
