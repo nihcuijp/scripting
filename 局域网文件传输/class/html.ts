@@ -120,13 +120,20 @@ function addMessage(m){
   wrap.scrollIntoView({ behavior: 'smooth' });
 }
 
-var ws = null, reconnectTimer = null;
+var ws = null, reconnectTimer = null, wsAuthenticated = false;
 function connect(){
   if (!authToken) return;
+  wsAuthenticated = false;
   try { ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws'); }
   catch (e){ scheduleReconnect(); return; }
   ws.onopen = function(){ ws.send(JSON.stringify({ type: 'auth', token: authToken })); };
-  ws.onclose = function(){ setStatus(false); scheduleReconnect(); };
+  ws.onclose = function(){
+    var wasAuthenticated = wsAuthenticated;
+    wsAuthenticated = false;
+    setStatus(false);
+    if (wasAuthenticated) scheduleReconnect();
+    else resumeTrusted(true);
+  };
   ws.onerror = function(){};
   ws.onmessage = function(ev){ handleIncoming(ev.data); };
 }
@@ -135,7 +142,7 @@ function setStatus(on){ statusEl.textContent = on ? '● 已连接到设备' : '
 
 function handleIncoming(raw){
   var p; try { p = JSON.parse(raw); } catch (e){ return; }
-  if (p.type === 'auth_ok'){ setStatus(true); }
+  if (p.type === 'auth_ok'){ wsAuthenticated = true; setStatus(true); }
   else if (p.type === 'auth_error'){
     resumeTrusted(true);
   }
