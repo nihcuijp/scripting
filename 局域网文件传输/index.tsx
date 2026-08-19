@@ -1,3 +1,5 @@
+import { Notification, Script } from "scripting"
 import { runChat } from "./launch"
 
-runChat()
+if (Notification.current) Script.exit()
+else runChat()

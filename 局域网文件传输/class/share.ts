@@ -421,7 +421,6 @@ export class Share {
         subtitle: sender,
         body: preview,
         threadIdentifier: "lan-transfer-clipboard",
-        tapAction: "none",
       })
     } catch {
       // 通知权限被拒绝不应影响剪贴板同步和聊天消息
