@@ -13,6 +13,9 @@ export type ChatMessage = {
   ts: number
   role: Role
   kind: MessageKind
+  /** 浏览器消息的发送设备信息（仅当前运行期展示） */
+  deviceName?: string
+  address?: string
   /** 文字消息内容（kind=text） */
   text?: string
   /** 文件名（kind=file） */

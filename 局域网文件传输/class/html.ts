@@ -224,7 +224,7 @@ function resumeTrusted(showError){
 
 function authorizedFetch(url, options){
   options = options || {};
-  options.headers = Object.assign({}, options.headers || {}, { authorization: 'Bearer ' + authToken });
+  options.headers = Object.assign({}, options.headers || {}, { authorization: 'Bearer ' + authToken, 'x-client-id': clientId });
   return fetch(url, options).then(function(res){
     if (res.status === 401){ clearPairing('配对会话已失效，请重新配对'); throw new Error('未授权'); }
     if (!res.ok) throw new Error('请求失败（' + res.status + '）');

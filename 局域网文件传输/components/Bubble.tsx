@@ -104,16 +104,24 @@ export function Bubble({ message }: { message: ChatMessage }) {
   // 文字/文件气泡随内容自适应宽度，Spacer 带 minLength 作为对侧最小边距来约束长内容气泡的
   // 最大宽度（见 TextBubble 注释）；图片气泡有固定宽度设计，用普通 Spacer
   const spacer = image ? <Spacer /> : <Spacer minLength={120} />
+  const content = message.kind === "text" ? (
+    <TextBubble text={message.text ?? ""} mine={mine} />
+  ) : image ? (
+    <ImageBubble message={message} mine={mine} />
+  ) : (
+    <FileBubble message={message} mine={mine} />
+  )
   return (
     <HStack frame={{ maxWidth: Infinity }}>
       {mine ? spacer : null}
-      {message.kind === "text" ? (
-        <TextBubble text={message.text ?? ""} mine={mine} />
-      ) : image ? (
-        <ImageBubble message={message} mine={mine} />
-      ) : (
-        <FileBubble message={message} mine={mine} />
-      )}
+      <VStack alignment={mine ? "trailing" : "leading"} spacing={4}>
+        {!mine && (message.deviceName || message.address) ? (
+          <Text font={11} foregroundStyle="secondaryLabel" padding={{ horizontal: 4 }}>
+            {[message.deviceName, message.address].filter(Boolean).join(" · ")}
+          </Text>
+        ) : null}
+        {content}
+      </VStack>
       {mine ? null : spacer}
     </HStack>
   )

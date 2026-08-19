@@ -296,6 +296,7 @@ export class Share {
         }
         const stat = FileManager.statSync(dest)
         const mime = ctype || FileManager.mimeType(dest)
+        const client = this.authorizedClients.get(headerValue(req.headers, "x-client-id") ?? "")
         const message: ChatMessage = {
           id: uid(),
           ts: Date.now(),
@@ -305,6 +306,8 @@ export class Share {
           fileSize: stat.size,
           mime,
           url: dest,
+          deviceName: client?.name,
+          address: client?.address ?? req.address ?? undefined,
         }
         this.inbox.push({ type: "incoming", message })
         return HttpResponse.raw(200, "OK", {
@@ -382,9 +385,18 @@ export class Share {
       return
     }
     if (packet.type === "text") {
+      const client = this.sessionClients.get(session)
       this.emit({
         type: "incoming",
-        message: { id: packet.id, ts: packet.ts, role: "browser", kind: "text", text: packet.text },
+        message: {
+          id: packet.id,
+          ts: packet.ts,
+          role: "browser",
+          kind: "text",
+          text: packet.text,
+          deviceName: client?.name,
+          address: client?.address,
+        },
       })
     }
   }
