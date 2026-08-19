@@ -21,8 +21,6 @@ export class TransferActivityController {
   private lastState = ""
   private lastDeviceCount = 0
   private lastUpdateAt = 0
-  private replacingActivity = false
-  private stopping = false
 
   private state(): TransferActivityState {
     const snapshot = share.activitySnapshot
@@ -49,7 +47,6 @@ export class TransferActivityController {
 
   async start(): Promise<boolean> {
     if (!(await LiveActivity.areActivitiesEnabled())) return false
-    this.stopping = false
     const restored = await this.restoreActivity()
     const activity = restored ?? await this.startNewActivity()
     if (!activity) return false
@@ -96,8 +93,7 @@ export class TransferActivityController {
       this.activityState = state
       console.info(`实时活动生命周期：${state}`)
       if (state === "ended" || state === "dismissed") {
-        Storage.remove(ACTIVITY_ID_KEY)
-        void this.replaceInactiveActivity(activity)
+        this.markActivityInactive(activity)
       }
     }
     this.activityStateListener = activityStateListener
@@ -117,7 +113,6 @@ export class TransferActivityController {
   private scheduleUpdate() {
     this.timer = setTimeout(() => {
       if (this.activity) this.schedulePendingUpdate()
-      else if (!this.stopping) void this.replaceInactiveActivity()
       this.scheduleUpdate()
     }, UPDATE_INTERVAL)
   }
@@ -165,8 +160,8 @@ export class TransferActivityController {
         : { relevanceScore },
     ).then(updated => {
       if (updated === false) {
-        console.warn("实时活动更新被系统拒绝，正在重新创建")
-        void this.replaceInactiveActivity(activity)
+        console.warn("实时活动更新被系统拒绝，正在检查活动状态")
+        void this.handleRejectedUpdate(activity, serialized)
         return
       }
       if (state.deviceCount !== previousDeviceCount) {
@@ -176,34 +171,39 @@ export class TransferActivityController {
       }
     }).catch(error => {
       console.warn(`实时活动更新失败：${String(error)}`)
-      void this.replaceInactiveActivity(activity)
+      void this.handleRejectedUpdate(activity, serialized)
     })
   }
 
-  private async replaceInactiveActivity(failedActivity?: LiveActivity<TransferActivityState>) {
-    if (this.stopping || this.replacingActivity) return
-    if (failedActivity && this.activity !== failedActivity) return
-    this.replacingActivity = true
+  private async handleRejectedUpdate(
+    activity: LiveActivity<TransferActivityState>,
+    serialized: string,
+  ) {
+    if (this.activity !== activity) return
     try {
-      if (this.activity) this.detachActivity()
-      Storage.remove(ACTIVITY_ID_KEY)
-      const activity = await this.startNewActivity()
-      if (!activity || this.stopping) return
-      this.attachActivity(activity)
-      const state = this.state()
-      this.lastState = JSON.stringify(state)
-      this.lastDeviceCount = state.deviceCount
-      this.lastUpdateAt = Date.now()
-      console.info("实时活动已重新创建")
+      const state = await activity.getActivityState()
+      if (this.activity !== activity) return
+      if (state === "active" || state === "stale") {
+        this.activityState = state
+        if (this.lastState === serialized) this.lastState = ""
+        this.schedulePendingUpdate(MIN_UPDATE_INTERVAL)
+        return
+      }
+      this.markActivityInactive(activity)
     } catch (error) {
-      console.warn(`实时活动重新创建失败：${String(error)}`)
-    } finally {
-      this.replacingActivity = false
+      console.warn(`实时活动状态检查失败：${String(error)}`)
+      if (this.lastState === serialized) this.lastState = ""
+      this.schedulePendingUpdate(MIN_UPDATE_INTERVAL)
     }
   }
 
+  private markActivityInactive(activity: LiveActivity<TransferActivityState>) {
+    if (this.activity !== activity) return
+    this.detachActivity()
+    Storage.remove(ACTIVITY_ID_KEY)
+  }
+
   async stop(): Promise<void> {
-    this.stopping = true
     share.setActivityStateListener(null)
     if (this.timer != null) clearTimeout(this.timer)
     this.timer = null
