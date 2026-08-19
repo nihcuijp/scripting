@@ -24,6 +24,7 @@ function randomPairingCode(): string {
 type PairAttempt = { failures: number; windowStart: number; blockedUntil: number }
 type TrustedDevice = { tokenHash: string; name: string; createdAt: number; lastUsedAt: number }
 type ClientInfo = { name: string; address: string }
+type PendingUpload = { path: string; name: string; mime: string; nextIndex: number; totalChunks: number; client?: ClientInfo }
 
 const TRUSTED_DEVICES_KEY = "lan-transfer.trustedDevices"
 const MAX_TRUSTED_DEVICES = 20
@@ -81,6 +82,7 @@ export class Share {
   private trustedDevices: TrustedDevice[] = []
   private authorizedClients = new Map<string, ClientInfo>()
   private sessionClients = new Map<WebSocketSession, ClientInfo>()
+  private pendingUploads = new Map<string, PendingUpload>()
   private listener: ((e: AppEvent) => void) | null = null
   private online = false
   private lastClient: ClientInfo | null = null
@@ -145,6 +147,7 @@ export class Share {
     this.sessionToken = randomToken()
     this.downloads.clear()
     this.pairAttempts.clear()
+    this.pendingUploads.clear()
     this.trustedDevices = this.loadTrustedDevices()
     await FileManager.createDirectory(this.uploadDir, true)
 
@@ -262,58 +265,77 @@ export class Share {
       return this.jsonResponse(200, "OK", { ok: true, token: this.sessionToken, clientId })
     })
 
-    // 文件上传（浏览器 → 本机）：浏览器直传原始字节，文件名走 ?name=，类型走 content-type
-    // （parseMultiPartFormData 对浏览器请求返回空 part：filename=null、data=undefined，不可用）
-    // 全程同步 + 请求体 base64 深拷贝（服务端给的 Data 缓冲可能随请求释放）
-    this.server.registerHandler("/upload", (req) => {
+    // 文件上传（浏览器 → 本机）：512 KB 顺序分块，直接二进制追加写入，避免整文件 Base64 深拷贝挤爆内存
+    this.server.registerHandler("/upload-chunk", (req) => {
       try {
         if (!this.isAuthorized(req)) return this.unauthorizedResponse()
         if (req.method !== "POST") return this.jsonResponse(405, "Method Not Allowed", { ok: false, error: "请使用 POST" })
-        const ctype = headerValue(req.headers, "content-type") ?? ""
-        if (ctype.indexOf("multipart/") === 0) {
-          // 旧版浏览器页面缓存仍会发 multipart，明确拒绝
-          return HttpResponse.raw(400, "Bad Request", {
-            headers: { "content-type": "application/json" },
-            body: Data.fromString(JSON.stringify({ ok: false, error: "浏览器页面是旧版，请刷新" }))!,
-          })
+        const query = (key: string) => req.queryParams.find((q) => q.key === key)?.value
+        const uploadId = query("id") ?? ""
+        const index = Number(query("index"))
+        const totalChunks = Number(query("total"))
+        if (!/^[a-zA-Z0-9_-]{16,100}$/.test(uploadId) || !Number.isInteger(index) || !Number.isInteger(totalChunks) || index < 0 || totalChunks < 1 || totalChunks > 20_000 || index >= totalChunks) {
+          return this.jsonResponse(400, "Bad Request", { ok: false, error: "上传分块参数无效" })
         }
-        let qname = req.queryParams.filter((q) => q.key === "name")[0]?.value
-        if (qname && qname.indexOf("%") >= 0) {
-          // 服务端若未解码查询参数则手动解码；含合法 % 的文件名解码会抛错并保留原值
-          try {
-            qname = decodeURIComponent(qname)
-          } catch {}
+
+        let upload = this.pendingUploads.get(uploadId)
+        if (!upload) {
+          if (index !== 0) return this.jsonResponse(409, "Conflict", { ok: false, error: "请从第一个分块重新上传" })
+          let qname = query("name")
+          if (qname && qname.indexOf("%") >= 0) {
+            try {
+              qname = decodeURIComponent(qname)
+            } catch {}
+          }
+          const name = this.sanitizeName(qname ?? "未命名")
+          const client = this.authorizedClients.get(headerValue(req.headers, "x-client-id") ?? "")
+          upload = {
+            path: this.uniquePath(name),
+            name,
+            mime: headerValue(req.headers, "content-type") ?? "application/octet-stream",
+            nextIndex: 0,
+            totalChunks,
+            client,
+          }
+          this.pendingUploads.set(uploadId, upload)
         }
-        const dest = this.uniquePath(this.sanitizeName(qname ?? "未命名"))
-        const b64 = req.body.toBase64String()
-        if (b64 === "") {
-          // 空文件（0 字节）无法 base64 往返，直接写空内容
-          FileManager.writeAsStringSync(dest, "")
-        } else {
-          const data = Data.fromBase64String(b64)
-          if (!data) throw new Error("上传数据读取失败")
-          FileManager.writeAsDataSync(dest, data)
+        if (upload.nextIndex !== index || upload.totalChunks !== totalChunks) {
+          return this.jsonResponse(409, "Conflict", { ok: false, error: "上传分块顺序不正确，请重试" })
         }
-        const stat = FileManager.statSync(dest)
-        const mime = ctype || FileManager.mimeType(dest)
-        const client = this.authorizedClients.get(headerValue(req.headers, "x-client-id") ?? "")
+
+        const output = index === 0 ? FileEntity.openNewForWriting(upload.path) : FileEntity.openForMode(upload.path, "ab")
+        try {
+          output.write(req.body)
+        } finally {
+          output.close()
+        }
+        upload.nextIndex += 1
+
+        const stat = FileManager.statSync(upload.path)
+        if (stat.size > 1_073_741_824) {
+          this.pendingUploads.delete(uploadId)
+          FileManager.removeSync(upload.path)
+          return this.jsonResponse(413, "Payload Too Large", { ok: false, error: "单个文件不能超过 1 GB" })
+        }
+        if (upload.nextIndex < upload.totalChunks) {
+          return this.jsonResponse(200, "OK", { ok: true, complete: false, nextIndex: upload.nextIndex })
+        }
+
+        this.pendingUploads.delete(uploadId)
         const message: ChatMessage = {
           id: uid(),
           ts: Date.now(),
           role: "browser",
           kind: "file",
-          fileName: Path.basename(dest),
+          fileName: Path.basename(upload.path),
           fileSize: stat.size,
-          mime,
-          url: dest,
-          deviceName: client?.name,
-          address: client?.address ?? req.address ?? undefined,
+          mime: upload.mime || FileManager.mimeType(upload.path),
+          url: upload.path,
+          deviceName: upload.client?.name,
+          address: upload.client?.address ?? req.address ?? undefined,
         }
         this.inbox.push({ type: "incoming", message })
-        return HttpResponse.raw(200, "OK", {
-          headers: { "content-type": "application/json" },
-          body: Data.fromString(JSON.stringify({ ok: true }))!,
-        })
+        return this.jsonResponse(200, "OK", { ok: true, complete: true })
       } catch (e) {
         // 上传异常不能拖垮整个脚本运行时，返回 500 供浏览器端感知
         return HttpResponse.raw(500, "Internal Server Error", {
@@ -566,6 +588,7 @@ export class Share {
     this.pairAttempts.clear()
     this.authorizedClients.clear()
     this.sessionClients.clear()
+    this.pendingUploads.clear()
     this.inbox = []
     this.online = false
     this.lastClient = null

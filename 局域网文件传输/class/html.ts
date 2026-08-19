@@ -247,16 +247,31 @@ attachBtn.onclick = function(){ fileInput.click(); };
 fileInput.onchange = function(){
   var files = Array.prototype.slice.call(fileInput.files || []);
   fileInput.value = '';
-  files.forEach(uploadFile);
+  files.reduce(function(chain, file){ return chain.then(function(){ return uploadFile(file); }); }, Promise.resolve());
 };
-function uploadFile(file){
+async function uploadFile(file){
   addMessage({ role: 'browser', kind: 'file', fileName: file.name, fileSize: file.size, mime: file.type, url: URL.createObjectURL(file) });
-  // 直传原始字节（服务端 multipart 解析不可用），文件名走查询参数、类型走 content-type
-  authorizedFetch('/upload?name=' + encodeURIComponent(file.name || '未命名'), {
-    method: 'POST',
-    headers: { 'content-type': file.type || 'application/octet-stream' },
-    body: file
-  }).catch(function(){});
+  var chunkSize = 512 * 1024;
+  var total = Math.max(1, Math.ceil(file.size / chunkSize));
+  var uploadId = Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2);
+  try {
+    for (var index = 0; index < total; index++) {
+      var start = index * chunkSize;
+      var chunk = file.slice(start, Math.min(file.size, start + chunkSize));
+      statusEl.textContent = '● 正在上传 ' + file.name + '（' + Math.round(index * 100 / total) + '%）';
+      var url = '/upload-chunk?id=' + encodeURIComponent(uploadId) + '&index=' + index + '&total=' + total + '&name=' + encodeURIComponent(file.name || '未命名');
+      await authorizedFetch(url, {
+        method: 'POST',
+        headers: { 'content-type': file.type || 'application/octet-stream' },
+        body: chunk
+      });
+    }
+    statusEl.textContent = '● 已连接到设备';
+    statusEl.className = 'status on';
+  } catch (err) {
+    statusEl.textContent = '● 上传失败：' + (err && err.message ? err.message : String(err));
+    statusEl.className = 'status off';
+  }
 }
 
 if (authToken && clientId){ document.body.classList.add('paired'); connect(); }
