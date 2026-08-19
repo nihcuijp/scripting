@@ -267,7 +267,7 @@ export class Share {
 
     // 文件上传（浏览器 → 本机）：256 KB 顺序分块。
     // 浏览器以小块 Base64 JSON 发送，绕开部分 Scripting 版本接收原始 Blob 时会终止脚本的问题。
-    this.server.registerHandler("/upload-chunk", (req) => {
+    this.server.registerAsyncHandler("/upload-chunk", async (req) => {
       try {
         if (!this.isAuthorized(req)) return this.unauthorizedResponse()
         if (req.method !== "POST") return this.jsonResponse(405, "Method Not Allowed", { ok: false, error: "请使用 POST" })
@@ -314,8 +314,8 @@ export class Share {
         const chunk = base64 ? Data.fromBase64String(base64) : null
         if (!chunk) return this.jsonResponse(400, "Bad Request", { ok: false, error: "上传分块数据无效" })
 
-        if (index === 0) FileManager.writeAsDataSync(upload.path, chunk)
-        else FileManager.appendDataSync(upload.path, chunk)
+        if (index === 0) await FileManager.writeAsData(upload.path, chunk)
+        else await FileManager.appendData(upload.path, chunk)
         upload.nextIndex += 1
 
         const stat = FileManager.statSync(upload.path)
