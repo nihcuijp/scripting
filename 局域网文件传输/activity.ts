@@ -13,11 +13,22 @@ export class TransferActivityController {
 
   private state(): TransferActivityState {
     const snapshot = share.activitySnapshot
+    const clients = snapshot.clients
+    const line = (index: number) => {
+      const client = clients[index]
+      return client ? `${client.name} · ${client.address}` : ""
+    }
     return {
       online: snapshot.online,
       address: share.link,
       pairingCode: share.pairingCode,
-      clients: snapshot.clients,
+      deviceCount: clients.length,
+      primaryName: clients[0]?.name ?? "",
+      deviceSummary: clients.map(client => client.name).join("、"),
+      client1: line(0),
+      client2: line(1),
+      client3: line(2),
+      remainingCount: Math.max(0, clients.length - 3),
       sent: snapshot.sent,
       received: snapshot.received,
     }

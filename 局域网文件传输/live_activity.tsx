@@ -18,20 +18,25 @@ export type TransferActivityState = {
   online: boolean
   address: string
   pairingCode: string
-  clients: { name: string; address: string }[]
+  deviceCount: number
+  primaryName: string
+  deviceSummary: string
+  client1: string
+  client2: string
+  client3: string
+  remainingCount: number
   sent: number
   received: number
 }
 
 function connectedTitle(state: TransferActivityState): string {
-  if (state.clients.length === 0) return "局域网传输运行中"
-  if (state.clients.length === 1) return `${state.clients[0].name} 已连接`
-  return `${state.clients.length} 台设备已连接`
+  if (state.deviceCount === 0) return "局域网传输运行中"
+  if (state.deviceCount === 1) return `${state.primaryName} 已连接`
+  return `${state.deviceCount} 台设备已连接`
 }
 
 function connectedSummary(state: TransferActivityState): string {
-  if (state.clients.length === 0) return state.address
-  return state.clients.map(client => client.name).join("、")
+  return state.deviceCount === 0 ? state.address : state.deviceSummary
 }
 
 function StatusIcon({ online }: { online: boolean }) {
@@ -60,7 +65,7 @@ const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
   <LiveActivityUI
     content={<LockScreenContent {...state} />}
     compactLeading={<StatusIcon online={state.online} />}
-    compactTrailing={<Text font="caption" fontWeight="semibold">{state.online ? `${state.clients.length}台` : "等待"}</Text>}
+    compactTrailing={<Text font="caption" fontWeight="semibold">{state.online ? `${state.deviceCount}台` : "等待"}</Text>}
     minimal={<StatusIcon online={state.online} />}>
     <LiveActivityUIExpandedLeading>
       <HStack spacing={7}>
@@ -73,13 +78,13 @@ const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
     </LiveActivityUIExpandedTrailing>
     <LiveActivityUIExpandedBottom>
       <VStack alignment="leading" spacing={5}>
-        {state.clients.length === 0
+        {state.deviceCount === 0
           ? <Text font="caption" lineLimit={1}>{state.address}</Text>
-          : state.clients.slice(0, 3).map(client => (
-              <Text key={`${client.name}-${client.address}`} font="caption" lineLimit={1}>{client.name} · {client.address}</Text>
-            ))}
-        {state.clients.length > 3
-          ? <Text font="caption" foregroundStyle="secondaryLabel">另有 {state.clients.length - 3} 台设备</Text>
+          : <Text font="caption" lineLimit={1}>{state.client1}</Text>}
+        {state.client2 ? <Text font="caption" lineLimit={1}>{state.client2}</Text> : null}
+        {state.client3 ? <Text font="caption" lineLimit={1}>{state.client3}</Text> : null}
+        {state.remainingCount > 0
+          ? <Text font="caption" foregroundStyle="secondaryLabel">另有 {state.remainingCount} 台设备</Text>
           : null}
         <HStack>
           <Text font="caption" foregroundStyle="secondaryLabel">发送 {state.sent}</Text>
