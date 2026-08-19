@@ -77,6 +77,7 @@ export class Share {
   private server = new HttpServer()
   private sessions: WebSocketSession[] = []
   private downloads = new Map<string, { path: string; key: string }>()
+  private outgoingFiles: Extract<Broadcast, { type: "file" }>[] = []
   private pairAttempts = new Map<string, PairAttempt>()
   private trustedDevices: TrustedDevice[] = []
   private authorizedClients = new Map<string, ClientInfo>()
@@ -148,6 +149,7 @@ export class Share {
     this.sentCount = 0
     this.receivedCount = 0
     this.downloads.clear()
+    this.outgoingFiles = []
     this.pairAttempts.clear()
     this.trustedDevices = this.loadTrustedDevices()
     await FileManager.createDirectory(this.uploadDir, true)
@@ -372,6 +374,8 @@ export class Share {
       this.sessions.push(session)
       this.sessionClients.set(session, client)
       session.writeText(JSON.stringify({ type: "auth_ok" }))
+      // 补发本次运行期已注册的文件，使稍后连接的浏览器也能看到并下载。
+      for (const packet of this.outgoingFiles) session.writeText(JSON.stringify(packet))
       this.setOnline(true, client)
       this.emitConnection(true, client)
       return
@@ -451,7 +455,18 @@ export class Share {
         mime,
         url: path,
       }
-      this.broadcast({ role: "app", type: "file", fileName, fileSize: stat.size, mime, url: `/dl/${id}?key=${encodeURIComponent(downloadKey)}`, id, ts })
+      const packet: Extract<Broadcast, { type: "file" }> = {
+        role: "app",
+        type: "file",
+        fileName,
+        fileSize: stat.size,
+        mime,
+        url: `/dl/${id}?key=${encodeURIComponent(downloadKey)}`,
+        id,
+        ts,
+      }
+      this.outgoingFiles.push(packet)
+      this.broadcast(packet)
       this.sentCount++
       out.push(message)
     }
@@ -575,6 +590,7 @@ export class Share {
     this.server.stop()
     this.sessions = []
     this.downloads.clear()
+    this.outgoingFiles = []
     this.pairAttempts.clear()
     this.authorizedClients.clear()
     this.sessionClients.clear()

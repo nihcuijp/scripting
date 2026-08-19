@@ -35,6 +35,7 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
   const qr = useObservable<boolean>(false)
   const keyboardVisible = useKeyboardVisible()
   const proxyRef = useRef<ScrollViewProxy | null>(null)
+  const initialFilesSent = useRef(false)
 
   // 绑定服务端事件：状态 + 收到的消息
   useEffect(() => {
@@ -78,10 +79,23 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
     }
   }, [])
 
-  // 初始待发文件（intent 传入）
+  // 分享表单传入的文件要等至少一台浏览器上线后再广播，避免发给零个会话。
   useEffect(() => {
-    if (initialFiles && initialFiles.length > 0) void sendFiles(initialFiles)
-  }, [])
+    if (!online.value || initialFilesSent.current || !initialFiles || initialFiles.length === 0) return
+    initialFilesSent.current = true
+    void sendFiles(initialFiles).catch((error) => {
+      messages.setValue([
+        ...messages.value,
+        {
+          id: `share-error-${Date.now()}`,
+          ts: Date.now(),
+          role: "system",
+          kind: "text",
+          text: `分享文件发送失败：${String(error)}`,
+        },
+      ])
+    })
+  }, [online.value])
 
   // 新消息滚到底
   useEffect(() => {
