@@ -191,8 +191,8 @@ export class Share {
       }
 
       const deviceToken = randomToken()
-      const now = Date.now()
-      const trusted: TrustedDevice = { tokenHash: tokenHash(deviceToken), name: deviceName, createdAt: now, lastUsedAt: now }
+      const pairedAt = Date.now()
+      const trusted: TrustedDevice = { tokenHash: tokenHash(deviceToken), name: deviceName, createdAt: pairedAt, lastUsedAt: pairedAt }
       const next = [...this.trustedDevices, trusted].slice(-MAX_TRUSTED_DEVICES)
       if (!this.saveTrustedDevices(next)) {
         return this.jsonResponse(500, "Internal Server Error", { ok: false, error: "无法保存受信任设备" })
