@@ -16,8 +16,6 @@ export class TransferActivityController {
   private lastState = ""
   private lastDeviceCount = 0
   private lastUpdateAt = 0
-  private updateRequested = false
-  private updateTask: Promise<void> | null = null
 
   private state(): TransferActivityState {
     const snapshot = share.activitySnapshot
@@ -80,12 +78,7 @@ export class TransferActivityController {
       this.schedulePendingUpdate(cooldown)
       return
     }
-    this.updateRequested = true
-    if (this.updateTask) return
-    this.updateTask = this.flushUpdates().finally(() => {
-      this.updateTask = null
-      if (this.updateRequested) this.requestUpdate()
-    })
+    this.dispatchLatestState()
   }
 
   private schedulePendingUpdate(minDelay = 0) {
@@ -98,41 +91,38 @@ export class TransferActivityController {
     }, delay)
   }
 
-  private async flushUpdates() {
-    while (this.updateRequested && this.activity) {
-      this.updateRequested = false
-      const state = this.state()
-      const serialized = JSON.stringify(state)
-      if (serialized === this.lastState) continue
-      const deviceCountChanged = state.deviceCount !== this.lastDeviceCount
-      const previousDeviceCount = this.lastDeviceCount
-      try {
-        const currentState = this.activityState
-        if (currentState === "ended" || currentState === "dismissed") {
-          console.warn(`实时活动不可更新：${currentState}`)
-          this.lastState = serialized
-          continue
-        }
-        const relevanceScore = state.online ? 90 : 80
-        await this.activity.update(
-          state,
-          currentState === "stale"
-            ? { relevanceScore, staleDate: Date.now() + STALE_INTERVAL }
-            : { relevanceScore },
-        )
-        this.lastUpdateAt = Date.now()
-        this.lastState = serialized
-        this.lastDeviceCount = state.deviceCount
-        if (deviceCountChanged) {
-          console.info(
-            `实时活动设备更新：${previousDeviceCount} → ${state.deviceCount}，活动=${String(this.activityState)}`,
-          )
-        }
-      } catch (error) {
-        console.warn(`实时活动更新失败：${String(error)}`)
-        break
-      }
+  private dispatchLatestState() {
+    const activity = this.activity
+    if (!activity) return
+    const state = this.state()
+    const serialized = JSON.stringify(state)
+    if (serialized === this.lastState) return
+    const currentState = this.activityState
+    if (currentState === "ended" || currentState === "dismissed") {
+      console.warn(`实时活动不可更新：${currentState}`)
+      return
     }
+    const previousDeviceCount = this.lastDeviceCount
+    const relevanceScore = state.online ? 90 : 80
+    this.lastUpdateAt = Date.now()
+    this.lastState = serialized
+    this.lastDeviceCount = state.deviceCount
+    void activity.update(
+      state,
+      currentState === "stale"
+        ? { relevanceScore, staleDate: Date.now() + STALE_INTERVAL }
+        : { relevanceScore },
+    ).then(() => {
+      if (state.deviceCount !== previousDeviceCount) {
+        console.info(
+          `实时活动设备更新：${previousDeviceCount} → ${state.deviceCount}，活动=${String(this.activityState)}`,
+        )
+      }
+    }).catch(error => {
+      console.warn(`实时活动更新失败：${String(error)}`)
+      if (this.lastState === serialized) this.lastState = ""
+      this.schedulePendingUpdate(MIN_UPDATE_INTERVAL)
+    })
   }
 
   async stop(): Promise<void> {
@@ -141,8 +131,6 @@ export class TransferActivityController {
     this.timer = null
     if (this.eventTimer != null) clearTimeout(this.eventTimer)
     this.eventTimer = null
-    this.updateRequested = false
-    if (this.updateTask) await this.updateTask
     const activity = this.activity
     this.activity = null
     if (activity && this.activityStateListener) activity.removeUpdateListener(this.activityStateListener)
