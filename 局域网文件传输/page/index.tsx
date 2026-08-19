@@ -101,6 +101,22 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
     await sendFiles(paths)
   }
 
+  async function forgetTrustedDevices() {
+    if (share.trustedDeviceCount === 0) {
+      await Dialog.alert({ title: "受信任设备", message: "当前没有已保存的浏览器。" })
+      return
+    }
+    const confirmed = await Dialog.confirm({
+      title: "清除受信任设备？",
+      message: `已保存 ${share.trustedDeviceCount} 个浏览器。清除后，它们下次连接时需要重新输入配对码。`,
+      confirmLabel: "清除",
+      cancelLabel: "取消",
+    })
+    if (!confirmed) return
+    share.forgetTrustedDevices()
+    await Dialog.alert({ title: "已清除", message: "所有已保存的浏览器都需要重新配对。" })
+  }
+
   // 从相册选取图片/视频，逐项读出并复制到沙盒后返回文件路径
   async function pickFromPhotos(): Promise<string[]> {
     const results = await Photos.pick({ limit: 9 })
@@ -127,6 +143,7 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
         topBarLeading: [<Button title="关闭" systemImage="xmark" tint="red" action={dismiss} />],
         topBarTrailing: [
           <Button title="二维码" systemImage="qrcode" action={() => qr.setValue(true)} />,
+          <Button title="清除信任" systemImage="person.crop.circle.badge.xmark" action={forgetTrustedDevices} />,
           <Button title="最小化" systemImage="chevron.down" action={() => Script.minimize()} />,
         ],
       }}

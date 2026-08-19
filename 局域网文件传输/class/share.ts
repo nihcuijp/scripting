@@ -22,10 +22,31 @@ function randomPairingCode(): string {
 }
 
 type PairAttempt = { failures: number; windowStart: number; blockedUntil: number }
+type TrustedDevice = { tokenHash: string; name: string; createdAt: number; lastUsedAt: number }
+
+const TRUSTED_DEVICES_KEY = "lan-transfer.trustedDevices"
+const MAX_TRUSTED_DEVICES = 20
+
+function tokenHash(token: string): string {
+  const data = Data.fromString(token)
+  if (!data) throw new Error("信任凭据读取失败")
+  return Crypto.sha256(data).toHexString()
+}
 
 // 大小写不敏感地读取请求头
 function headerValue(headers: Record<string, string>, key: string): string | undefined {
   for (const k in headers) if (k.toLowerCase() === key) return headers[k]
+  return undefined
+}
+
+function cookieValue(headers: Record<string, string>, name: string): string | undefined {
+  const cookie = headerValue(headers, "cookie")
+  if (!cookie) return undefined
+  for (const part of cookie.split(";")) {
+    const separator = part.indexOf("=")
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue
+    return part.slice(separator + 1).trim()
+  }
   return undefined
 }
 
@@ -56,6 +77,7 @@ export class Share {
   private sessions: WebSocketSession[] = []
   private downloads = new Map<string, { path: string; key: string }>()
   private pairAttempts = new Map<string, PairAttempt>()
+  private trustedDevices: TrustedDevice[] = []
   private listener: ((e: AppEvent) => void) | null = null
   private started = false
   // 上传收到的事件队列：registerAsyncHandler 的上下文里直接回调 UI（observable setValue）
@@ -91,6 +113,7 @@ export class Share {
     this.sessionToken = randomToken()
     this.downloads.clear()
     this.pairAttempts.clear()
+    this.trustedDevices = this.loadTrustedDevices()
     await FileManager.createDirectory(this.uploadDir, true)
 
     this.server = new HttpServer()
@@ -128,10 +151,14 @@ export class Share {
       }
 
       let code = ""
+      let remember = false
+      let deviceName = "浏览器"
       try {
         const raw = req.body.toRawString("utf-8") ?? ""
-        const body = JSON.parse(raw) as { code?: unknown }
+        const body = JSON.parse(raw) as { code?: unknown; remember?: unknown; deviceName?: unknown }
         code = typeof body.code === "string" ? body.code.trim() : ""
+        remember = body.remember === true
+        if (typeof body.deviceName === "string") deviceName = body.deviceName.trim().slice(0, 60) || "浏览器"
       } catch {
         return this.jsonResponse(400, "Bad Request", { ok: false, error: "请输入 6 位配对码" })
       }
@@ -154,6 +181,50 @@ export class Share {
       }
 
       this.pairAttempts.delete(client)
+      if (!remember) {
+        return this.jsonResponse(
+          200,
+          "OK",
+          { ok: true, token: this.sessionToken },
+          { "set-cookie": "lan_transfer_trust=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict" },
+        )
+      }
+
+      const deviceToken = randomToken()
+      const now = Date.now()
+      const trusted: TrustedDevice = { tokenHash: tokenHash(deviceToken), name: deviceName, createdAt: now, lastUsedAt: now }
+      const next = [...this.trustedDevices, trusted].slice(-MAX_TRUSTED_DEVICES)
+      if (!Storage.set(TRUSTED_DEVICES_KEY, next)) {
+        return this.jsonResponse(500, "Internal Server Error", { ok: false, error: "无法保存受信任设备" })
+      }
+      this.trustedDevices = next
+      return this.jsonResponse(
+        200,
+        "OK",
+        { ok: true, token: this.sessionToken },
+        { "set-cookie": `lan_transfer_trust=${deviceToken}; Max-Age=31536000; Path=/; HttpOnly; SameSite=Strict` },
+      )
+    })
+
+    // 已信任浏览器用长期随机凭据换取本次运行期的临时会话令牌
+    this.server.registerHandler("/resume", (req) => {
+      if (req.method !== "POST") return this.jsonResponse(405, "Method Not Allowed", { ok: false, error: "请使用 POST" })
+      const savedToken = cookieValue(req.headers, "lan_transfer_trust") ?? ""
+      let deviceName = "浏览器"
+      try {
+        const raw = req.body.toRawString("utf-8") ?? ""
+        const body = JSON.parse(raw) as { deviceName?: unknown }
+        if (typeof body.deviceName === "string") deviceName = body.deviceName.trim().slice(0, 60) || "浏览器"
+      } catch {
+        return this.unauthorizedResponse(true)
+      }
+      if (savedToken.length < 32) return this.unauthorizedResponse(true)
+
+      const hash = tokenHash(savedToken)
+      const index = this.trustedDevices.findIndex((device) => device.tokenHash === hash)
+      if (index < 0) return this.unauthorizedResponse(true)
+      this.trustedDevices[index] = { ...this.trustedDevices[index], name: deviceName, lastUsedAt: Date.now() }
+      Storage.set(TRUSTED_DEVICES_KEY, this.trustedDevices)
       return this.jsonResponse(200, "OK", { ok: true, token: this.sessionToken })
     })
 
@@ -321,23 +392,56 @@ export class Share {
     return this.pairCode
   }
 
+  get trustedDeviceCount(): number {
+    return this.trustedDevices.length
+  }
+
+  forgetTrustedDevices() {
+    this.trustedDevices = []
+    Storage.remove(TRUSTED_DEVICES_KEY)
+  }
+
   private isAuthorized(req: HttpRequest): boolean {
     return req.hasTokenForHeader("authorization", `Bearer ${this.sessionToken}`)
   }
 
-  private jsonResponse(status: number, phrase: string, value: unknown): HttpResponse {
+  private jsonResponse(status: number, phrase: string, value: unknown, extraHeaders: Record<string, string> = {}): HttpResponse {
     return HttpResponse.raw(status, phrase, {
       headers: {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
+        ...extraHeaders,
       },
       body: Data.fromString(JSON.stringify(value))!,
     })
   }
 
-  private unauthorizedResponse(): HttpResponse {
-    return this.jsonResponse(401, "Unauthorized", { ok: false, error: "未配对或会话已失效" })
+  private unauthorizedResponse(clearTrustCookie = false): HttpResponse {
+    return this.jsonResponse(
+      401,
+      "Unauthorized",
+      { ok: false, error: "未配对或会话已失效" },
+      clearTrustCookie ? { "set-cookie": "lan_transfer_trust=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict" } : {},
+    )
+  }
+
+  private loadTrustedDevices(): TrustedDevice[] {
+    const value = Storage.get<unknown>(TRUSTED_DEVICES_KEY)
+    if (!Array.isArray(value)) return []
+    return value
+      .filter((item): item is TrustedDevice => {
+        if (!item || typeof item !== "object") return false
+        const candidate = item as Partial<TrustedDevice>
+        return (
+          typeof candidate.tokenHash === "string" &&
+          candidate.tokenHash.length === 64 &&
+          typeof candidate.name === "string" &&
+          typeof candidate.createdAt === "number" &&
+          typeof candidate.lastUsedAt === "number"
+        )
+      })
+      .slice(-MAX_TRUSTED_DEVICES)
   }
 
   private sanitizeName(name: string): string {

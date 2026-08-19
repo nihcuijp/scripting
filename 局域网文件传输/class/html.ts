@@ -47,8 +47,10 @@ export function chatPageHtml(): string {
   .pair-icon{ font-size:42px; margin-bottom:10px }
   .pair-card h1{ margin:0 0 8px; font-size:23px }
   .pair-card p{ margin:0 0 20px; color:var(--muted); font-size:14px; line-height:1.5 }
-  .pair-card input{ width:100%; border:1px solid var(--line); border-radius:15px; padding:13px 12px; background:transparent; color:var(--text); font-size:24px; font-weight:600; text-align:center; letter-spacing:.28em; outline:none }
-  .pair-card input:focus{ border-color:var(--accent); box-shadow:0 0 0 3px rgba(0,122,255,.14) }
+  .pair-card input[type="text"]{ width:100%; border:1px solid var(--line); border-radius:15px; padding:13px 12px; background:transparent; color:var(--text); font-size:24px; font-weight:600; text-align:center; letter-spacing:.28em; outline:none }
+  .pair-card input[type="text"]:focus{ border-color:var(--accent); box-shadow:0 0 0 3px rgba(0,122,255,.14) }
+  .remember{ display:flex; align-items:center; justify-content:center; gap:8px; margin-top:14px; color:var(--muted); font-size:14px }
+  .remember input{ width:18px; height:18px; accent-color:var(--accent) }
   .pair-card button{ width:100%; margin-top:12px; border:0; border-radius:15px; padding:13px; background:var(--accent); color:#fff; font-size:16px; font-weight:600 }
   .pair-card button:disabled{ opacity:.55 }
   .pair-error{ min-height:20px; margin-top:10px; color:#ff3b30; font-size:13px }
@@ -62,6 +64,7 @@ export function chatPageHtml(): string {
     <h1>与设备配对</h1>
     <p>请输入 Scripting 设备上显示的 6 位配对码</p>
     <input id="pairInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="6 位配对码">
+    <label class="remember"><input id="rememberInput" type="checkbox" checked> 信任此浏览器，下次自动连接</label>
     <button id="pairBtn" type="submit">配对</button>
     <div id="pairError" class="pair-error" role="alert"></div>
   </form>
@@ -86,9 +89,16 @@ var fileInput = document.getElementById('fileInput');
 var statusEl = document.getElementById('status');
 var pairForm = document.getElementById('pairForm');
 var pairInput = document.getElementById('pairInput');
+var rememberInput = document.getElementById('rememberInput');
 var pairBtn = document.getElementById('pairBtn');
 var pairError = document.getElementById('pairError');
 var authToken = sessionStorage.getItem('lan-transfer-token') || '';
+var resuming = false;
+
+function deviceName(){
+  var platform = navigator.userAgentData && navigator.userAgentData.platform;
+  return String(platform || navigator.platform || '浏览器').slice(0, 60);
+}
 
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function fmtSize(b){ b = b || 0; if (b < 1024) return b + ' B'; var u = ['KB','MB','GB','TB']; var i = Math.min(Math.floor(Math.log(b) / Math.log(1024)) - 1, u.length - 1); return (b / Math.pow(1024, i + 1)).toFixed(b >= Math.pow(1024, i + 2) ? 1 : 0) + ' ' + u[i]; }
@@ -126,7 +136,9 @@ function setStatus(on){ statusEl.textContent = on ? '● 已连接到设备' : '
 function handleIncoming(raw){
   var p; try { p = JSON.parse(raw); } catch (e){ return; }
   if (p.type === 'auth_ok'){ setStatus(true); }
-  else if (p.type === 'auth_error'){ clearPairing('配对会话已失效，请重新输入配对码'); }
+  else if (p.type === 'auth_error'){
+    resumeTrusted(true);
+  }
   else if (p.role === 'app' && p.type === 'text'){ addMessage({ role: 'app', kind: 'text', text: p.text }); }
   else if (p.role === 'app' && p.type === 'file'){ addMessage({ role: 'app', kind: 'file', fileName: p.fileName, fileSize: p.fileSize, mime: p.mime, url: location.origin + p.url }); }
 }
@@ -141,7 +153,7 @@ pairForm.onsubmit = function(e){
   fetch('/pair', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ code: code })
+    body: JSON.stringify({ code: code, remember: rememberInput.checked, deviceName: deviceName() })
   }).then(function(res){ return res.json().catch(function(){ return {}; }).then(function(body){ return { status: res.status, body: body }; }); })
     .then(function(result){
       if (result.status !== 200 || !result.body.token) throw new Error(result.body.error || '配对失败');
@@ -165,6 +177,33 @@ function clearPairing(message){
   if (reconnectTimer){ clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (ws){ try { ws.close(); } catch (e){} ws = null; }
   pairInput.focus();
+}
+
+function resumeTrusted(showError){
+  if (resuming) return;
+  resuming = true;
+  authToken = '';
+  sessionStorage.removeItem('lan-transfer-token');
+  if (reconnectTimer){ clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (ws){ try { ws.close(); } catch (e){} ws = null; }
+  statusEl.textContent = '● 正在恢复受信任会话…';
+  statusEl.className = 'status off';
+  fetch('/resume', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceName: deviceName() })
+  }).then(function(res){ return res.json().catch(function(){ return {}; }).then(function(body){ return { status: res.status, body: body }; }); })
+    .then(function(result){
+      if (result.status !== 200 || !result.body.token) throw new Error(result.body.error || '自动连接失败');
+      authToken = result.body.token;
+      sessionStorage.setItem('lan-transfer-token', authToken);
+      document.body.classList.add('paired');
+      connect();
+    })
+    .catch(function(err){
+      clearPairing(showError ? (err.message || '自动连接失败，请重新配对') : '');
+    })
+    .then(function(){ resuming = false; });
 }
 
 function authorizedFetch(url, options){
@@ -205,7 +244,7 @@ function uploadFile(file){
 }
 
 if (authToken){ document.body.classList.add('paired'); connect(); }
-else { pairInput.focus(); }
+else { document.body.classList.add('paired'); resumeTrusted(false); }
 </script>
 </body>
 </html>`;
