@@ -85,6 +85,8 @@ export class Share {
   private online = false
   private lastClient: ClientInfo | null = null
   private started = false
+  private sentCount = 0
+  private receivedCount = 0
   // 上传收到的事件队列：registerAsyncHandler 的上下文里直接回调 UI（observable setValue）
   // 会导致整个进程崩溃，因此这里只入队，由页面在自己的定时器里 drainInbox 后再刷新
   private inbox: AppEvent[] = []
@@ -143,6 +145,8 @@ export class Share {
     if (this.started) return
     this.pairCode = randomPairingCode()
     this.sessionToken = randomToken()
+    this.sentCount = 0
+    this.receivedCount = 0
     this.downloads.clear()
     this.pairAttempts.clear()
     this.trustedDevices = this.loadTrustedDevices()
@@ -300,6 +304,7 @@ export class Share {
           address: client?.address ?? req.address ?? undefined,
         }
         this.inbox.push({ type: "incoming", message })
+        this.receivedCount++
         return this.jsonResponse(200, "OK", { ok: true })
       } catch (e) {
         // 上传异常不能拖垮整个脚本运行时，返回 500 供浏览器端感知
@@ -375,6 +380,7 @@ export class Share {
       if (typeof packet.text !== "string" || packet.text.length === 0) return
       const text = packet.text.slice(0, 100_000)
       const client = this.sessionClients.get(session)
+      this.receivedCount++
       this.emit({
         type: "incoming",
         message: {
@@ -420,6 +426,7 @@ export class Share {
     const id = uid()
     const ts = Date.now()
     this.broadcast({ role: "app", type: "text", text, id, ts })
+    this.sentCount++
     return { id, ts, role: "app", kind: "text", text }
   }
 
@@ -445,6 +452,7 @@ export class Share {
         url: path,
       }
       this.broadcast({ role: "app", type: "file", fileName, fileSize: stat.size, mime, url: `/dl/${id}?key=${encodeURIComponent(downloadKey)}`, id, ts })
+      this.sentCount++
       out.push(message)
     }
     return out
@@ -460,6 +468,16 @@ export class Share {
 
   get trustedDeviceCount(): number {
     return this.trustedDevices.length
+  }
+
+  get activitySnapshot() {
+    return {
+      online: this.online,
+      deviceName: this.lastClient?.name,
+      address: this.lastClient?.address,
+      sent: this.sentCount,
+      received: this.receivedCount,
+    }
   }
 
   forgetTrustedDevices() {
