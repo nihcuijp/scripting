@@ -1,14 +1,19 @@
 import { LiveActivity, type LiveActivityState } from "scripting"
 import { share } from "./class/share"
-import { LanTransferActivity, type TransferActivityState } from "./live_activity"
+import {
+  LanTransferActivity,
+  TRANSFER_ACTIVITY_NAME,
+  type TransferActivityState,
+} from "./live_activity"
 
+const ACTIVITY_ID_KEY = "lanTransfer.activityId"
 const UPDATE_INTERVAL = 5_000
 const EVENT_DEBOUNCE = 350
 const MIN_UPDATE_INTERVAL = 5_000
 const STALE_INTERVAL = 60 * 60 * 1_000
 
 export class TransferActivityController {
-  private activity: ReturnType<typeof LanTransferActivity> | null = null
+  private activity: LiveActivity<TransferActivityState> | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private eventTimer: ReturnType<typeof setTimeout> | null = null
   private activityState: LiveActivityState | null = null
@@ -16,6 +21,8 @@ export class TransferActivityController {
   private lastState = ""
   private lastDeviceCount = 0
   private lastUpdateAt = 0
+  private replacingActivity = false
+  private stopping = false
 
   private state(): TransferActivityState {
     const snapshot = share.activitySnapshot
@@ -42,31 +49,75 @@ export class TransferActivityController {
 
   async start(): Promise<boolean> {
     if (!(await LiveActivity.areActivitiesEnabled())) return false
-    const activity = LanTransferActivity()
-    const activityStateListener = (state: LiveActivityState) => {
-      this.activityState = state
-      console.info(`实时活动生命周期：${state}`)
-    }
-    activity.addUpdateListener(activityStateListener)
+    this.stopping = false
+    const restored = await this.restoreActivity()
+    const activity = restored ?? await this.startNewActivity()
+    if (!activity) return false
+    this.attachActivity(activity)
     const state = this.state()
-    if (!(await activity.start(state, { relevanceScore: 80 }))) {
-      activity.removeUpdateListener(activityStateListener)
-      return false
-    }
-    this.activity = activity
-    this.activityState = "active"
-    this.activityStateListener = activityStateListener
-    this.lastState = JSON.stringify(state)
+    this.lastState = restored ? "" : JSON.stringify(state)
     this.lastDeviceCount = state.deviceCount
     share.setActivityStateListener(() => this.schedulePendingUpdate(EVENT_DEBOUNCE))
     this.scheduleUpdate()
+    if (restored) this.schedulePendingUpdate(EVENT_DEBOUNCE)
     return true
+  }
+
+  private async restoreActivity(): Promise<LiveActivity<TransferActivityState> | null> {
+    const activityId = Storage.get<string>(ACTIVITY_ID_KEY)
+    if (!activityId) return null
+    try {
+      const activity = await LiveActivity.from<TransferActivityState>(
+        activityId,
+        TRANSFER_ACTIVITY_NAME,
+      )
+      const state = activity ? await activity.getActivityState() : null
+      if (activity && (state === "active" || state === "stale")) return activity
+    } catch (error) {
+      console.warn(`实时活动恢复失败：${String(error)}`)
+    }
+    Storage.remove(ACTIVITY_ID_KEY)
+    return null
+  }
+
+  private async startNewActivity(): Promise<LiveActivity<TransferActivityState> | null> {
+    const activity = LanTransferActivity()
+    const state = this.state()
+    if (!(await activity.start(state, { relevanceScore: state.online ? 90 : 80 }))) return null
+    if (activity.activityId) Storage.set(ACTIVITY_ID_KEY, activity.activityId)
+    return activity
+  }
+
+  private attachActivity(activity: LiveActivity<TransferActivityState>) {
+    this.activity = activity
+    this.activityState = "active"
+    const activityStateListener = (state: LiveActivityState) => {
+      if (this.activity !== activity) return
+      this.activityState = state
+      console.info(`实时活动生命周期：${state}`)
+      if (state === "ended" || state === "dismissed") {
+        Storage.remove(ACTIVITY_ID_KEY)
+        void this.replaceInactiveActivity(activity)
+      }
+    }
+    this.activityStateListener = activityStateListener
+    activity.addUpdateListener(activityStateListener)
+  }
+
+  private detachActivity() {
+    const activity = this.activity
+    if (activity && this.activityStateListener) {
+      try { activity.removeUpdateListener(this.activityStateListener) } catch {}
+    }
+    this.activity = null
+    this.activityState = null
+    this.activityStateListener = null
   }
 
   private scheduleUpdate() {
     this.timer = setTimeout(() => {
-      if (!this.activity) return
-      this.schedulePendingUpdate()
+      if (this.activity) this.schedulePendingUpdate()
+      else if (!this.stopping) void this.replaceInactiveActivity()
       this.scheduleUpdate()
     }, UPDATE_INTERVAL)
   }
@@ -112,7 +163,12 @@ export class TransferActivityController {
       currentState === "stale"
         ? { relevanceScore, staleDate: Date.now() + STALE_INTERVAL }
         : { relevanceScore },
-    ).then(() => {
+    ).then(updated => {
+      if (updated === false) {
+        console.warn("实时活动更新被系统拒绝，正在重新创建")
+        void this.replaceInactiveActivity(activity)
+        return
+      }
       if (state.deviceCount !== previousDeviceCount) {
         console.info(
           `实时活动设备更新：${previousDeviceCount} → ${state.deviceCount}，活动=${String(this.activityState)}`,
@@ -120,22 +176,42 @@ export class TransferActivityController {
       }
     }).catch(error => {
       console.warn(`实时活动更新失败：${String(error)}`)
-      if (this.lastState === serialized) this.lastState = ""
-      this.schedulePendingUpdate(MIN_UPDATE_INTERVAL)
+      void this.replaceInactiveActivity(activity)
     })
   }
 
+  private async replaceInactiveActivity(failedActivity?: LiveActivity<TransferActivityState>) {
+    if (this.stopping || this.replacingActivity) return
+    if (failedActivity && this.activity !== failedActivity) return
+    this.replacingActivity = true
+    try {
+      if (this.activity) this.detachActivity()
+      Storage.remove(ACTIVITY_ID_KEY)
+      const activity = await this.startNewActivity()
+      if (!activity || this.stopping) return
+      this.attachActivity(activity)
+      const state = this.state()
+      this.lastState = JSON.stringify(state)
+      this.lastDeviceCount = state.deviceCount
+      this.lastUpdateAt = Date.now()
+      console.info("实时活动已重新创建")
+    } catch (error) {
+      console.warn(`实时活动重新创建失败：${String(error)}`)
+    } finally {
+      this.replacingActivity = false
+    }
+  }
+
   async stop(): Promise<void> {
+    this.stopping = true
     share.setActivityStateListener(null)
     if (this.timer != null) clearTimeout(this.timer)
     this.timer = null
     if (this.eventTimer != null) clearTimeout(this.eventTimer)
     this.eventTimer = null
     const activity = this.activity
-    this.activity = null
-    if (activity && this.activityStateListener) activity.removeUpdateListener(this.activityStateListener)
-    this.activityStateListener = null
-    this.activityState = null
+    this.detachActivity()
+    Storage.remove(ACTIVITY_ID_KEY)
     if (activity) await activity.end(this.state(), { dismissTimeInterval: 0 })
   }
 }
