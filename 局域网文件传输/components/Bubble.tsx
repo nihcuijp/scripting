@@ -83,6 +83,21 @@ function TextBubble({ text, mine }: { text: string; mine: boolean }) {
 
 // 单条消息行：按发送方决定左右
 export function Bubble({ message }: { message: ChatMessage }) {
+  if (message.role === "system") {
+    return (
+      <HStack frame={{ maxWidth: Infinity }}>
+        <Spacer />
+        <Text
+          font={12}
+          foregroundStyle="secondaryLabel"
+          padding={{ horizontal: 12, vertical: 6 }}
+          background={{ style: { light: "#f2f2f7", dark: "#1c1c1e" }, shape: "capsule" }}>
+          {message.text ?? ""}
+        </Text>
+        <Spacer />
+      </HStack>
+    )
+  }
   const mine = message.role === "app"
   const image = message.kind !== "text" && isImage(message)
   // 用 Spacer 将气泡推向一侧：己方靠右、对方靠左。

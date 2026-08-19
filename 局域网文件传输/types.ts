@@ -1,7 +1,7 @@
 // 聊天消息与连接状态的统一类型，App 端与浏览器端共用
 
 /** 消息发送方 */
-export type Role = "app" | "browser"
+export type Role = "app" | "browser" | "system"
 
 /** 消息类型：纯文字或文件（图片统一归为 file，按 mime 在渲染层区分） */
 export type MessageKind = "text" | "file"

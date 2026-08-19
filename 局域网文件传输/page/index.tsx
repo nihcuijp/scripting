@@ -39,7 +39,22 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
   // 绑定服务端事件：状态 + 收到的消息
   useEffect(() => {
     share.setListener((e: AppEvent) => {
-      if (e.type === "status") online.setValue(e.online)
+      if (e.type === "status") {
+        if (e.online !== online.value) {
+          const timestamp = Date.now()
+          messages.setValue([
+            ...messages.value,
+            {
+              id: `status-${timestamp}-${e.online ? "online" : "offline"}`,
+              ts: timestamp,
+              role: "system",
+              kind: "text",
+              text: e.online ? "浏览器已连接" : "浏览器已断开",
+            },
+          ])
+        }
+        online.setValue(e.online)
+      }
       else if (e.type === "incoming") messages.setValue([...messages.value, e.message])
     })
     return () => share.setListener(null)
