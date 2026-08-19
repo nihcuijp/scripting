@@ -1,4 +1,4 @@
-import { Path } from "scripting"
+import { Notification, Pasteboard, Path } from "scripting"
 import type { AppEvent, Broadcast, ChatMessage, IncomingPacket } from "../types"
 import { chatPageHtml } from "./html"
 
@@ -385,6 +385,8 @@ export class Share {
       return
     }
     if (packet.type === "text") {
+      if (typeof packet.text !== "string" || packet.text.length === 0) return
+      const text = packet.text.slice(0, 100_000)
       const client = this.sessionClients.get(session)
       this.emit({
         type: "incoming",
@@ -393,11 +395,35 @@ export class Share {
           ts: packet.ts,
           role: "browser",
           kind: "text",
-          text: packet.text,
+          text,
           deviceName: client?.name,
           address: client?.address,
         },
       })
+      void this.copyTextAndNotify(text, client)
+    }
+  }
+
+  private async copyTextAndNotify(text: string, client?: ClientInfo) {
+    let copied = false
+    try {
+      await Pasteboard.setString(text)
+      copied = true
+    } catch {
+      // 剪贴板权限被拒绝时仍保留聊天消息，并继续尝试通知
+    }
+
+    const sender = [client?.name, client?.address].filter(Boolean).join(" · ") || "浏览器"
+    const preview = text.length > 160 ? `${text.slice(0, 160)}…` : text
+    try {
+      await Notification.schedule({
+        title: copied ? "已复制跨平台文本" : "收到新的跨平台文本",
+        subtitle: sender,
+        body: preview,
+        threadIdentifier: "lan-transfer-clipboard",
+      })
+    } catch {
+      // 通知权限被拒绝不应影响剪贴板同步和聊天消息
     }
   }
 
