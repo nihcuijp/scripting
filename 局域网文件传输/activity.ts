@@ -7,8 +7,11 @@ const UPDATE_INTERVAL = 5_000
 export class TransferActivityController {
   private activity: ReturnType<typeof LanTransferActivity> | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
+  private retryTimers: ReturnType<typeof setTimeout>[] = []
   private lastState = ""
+  private lastDeviceCount = 0
   private updateRequested = false
+  private forceUpdateRequested = false
   private updateTask: Promise<void> | null = null
 
   private state(): TransferActivityState {
@@ -41,7 +44,8 @@ export class TransferActivityController {
     if (!(await activity.start(state, { relevanceScore: 80 }))) return false
     this.activity = activity
     this.lastState = JSON.stringify(state)
-    share.setActivityStateListener(() => this.requestUpdate())
+    this.lastDeviceCount = state.deviceCount
+    share.setActivityStateListener(() => this.requestUpdate(true))
     this.scheduleUpdate()
     return true
   }
@@ -54,9 +58,10 @@ export class TransferActivityController {
     }, UPDATE_INTERVAL)
   }
 
-  private requestUpdate() {
+  private requestUpdate(force = false) {
     if (!this.activity) return
     this.updateRequested = true
+    if (force) this.forceUpdateRequested = true
     if (this.updateTask) return
     this.updateTask = this.flushUpdates().finally(() => {
       this.updateTask = null
@@ -67,12 +72,26 @@ export class TransferActivityController {
   private async flushUpdates() {
     while (this.updateRequested && this.activity) {
       this.updateRequested = false
+      const force = this.forceUpdateRequested
+      this.forceUpdateRequested = false
       const state = this.state()
       const serialized = JSON.stringify(state)
-      if (serialized === this.lastState) continue
+      if (!force && serialized === this.lastState) continue
+      const deviceCountChanged = state.deviceCount !== this.lastDeviceCount
       try {
+        if (deviceCountChanged) {
+          const [activityState, backgroundActive] = await Promise.all([
+            this.activity.getActivityState(),
+            BackgroundKeeper.isActive,
+          ])
+          console.info(
+            `实时活动设备变化：${this.lastDeviceCount} → ${state.deviceCount}，活动=${String(activityState)}，后台保活=${backgroundActive}`,
+          )
+        }
         await this.activity.update(state, { relevanceScore: state.online ? 90 : 80 })
         this.lastState = serialized
+        this.lastDeviceCount = state.deviceCount
+        if (deviceCountChanged) this.scheduleReconciliation(serialized)
       } catch (error) {
         console.warn(`实时活动更新失败：${String(error)}`)
         break
@@ -80,11 +99,25 @@ export class TransferActivityController {
     }
   }
 
+  private scheduleReconciliation(serialized: string) {
+    for (const timer of this.retryTimers) clearTimeout(timer)
+    this.retryTimers = [800, 2_500].map(delay =>
+      setTimeout(() => {
+        if (!this.activity || JSON.stringify(this.state()) !== serialized) return
+        console.info(`实时活动状态重发：${delay}ms`)
+        this.requestUpdate(true)
+      }, delay),
+    )
+  }
+
   async stop(): Promise<void> {
     share.setActivityStateListener(null)
     if (this.timer != null) clearTimeout(this.timer)
     this.timer = null
+    for (const timer of this.retryTimers) clearTimeout(timer)
+    this.retryTimers = []
     this.updateRequested = false
+    this.forceUpdateRequested = false
     if (this.updateTask) await this.updateTask
     const activity = this.activity
     this.activity = null
