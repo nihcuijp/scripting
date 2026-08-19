@@ -194,7 +194,7 @@ export class Share {
       const now = Date.now()
       const trusted: TrustedDevice = { tokenHash: tokenHash(deviceToken), name: deviceName, createdAt: now, lastUsedAt: now }
       const next = [...this.trustedDevices, trusted].slice(-MAX_TRUSTED_DEVICES)
-      if (!Storage.set(TRUSTED_DEVICES_KEY, next)) {
+      if (!this.saveTrustedDevices(next)) {
         return this.jsonResponse(500, "Internal Server Error", { ok: false, error: "无法保存受信任设备" })
       }
       this.trustedDevices = next
@@ -224,7 +224,7 @@ export class Share {
       const index = this.trustedDevices.findIndex((device) => device.tokenHash === hash)
       if (index < 0) return this.unauthorizedResponse(true)
       this.trustedDevices[index] = { ...this.trustedDevices[index], name: deviceName, lastUsedAt: Date.now() }
-      Storage.set(TRUSTED_DEVICES_KEY, this.trustedDevices)
+      this.saveTrustedDevices(this.trustedDevices)
       return this.jsonResponse(200, "OK", { ok: true, token: this.sessionToken })
     })
 
@@ -398,7 +398,11 @@ export class Share {
 
   forgetTrustedDevices() {
     this.trustedDevices = []
-    Storage.remove(TRUSTED_DEVICES_KEY)
+    try {
+      Keychain.remove(TRUSTED_DEVICES_KEY)
+    } catch {
+      // Keychain 不可用时仍保持当前运行期的信任列表为空
+    }
   }
 
   private isAuthorized(req: HttpRequest): boolean {
@@ -427,21 +431,35 @@ export class Share {
   }
 
   private loadTrustedDevices(): TrustedDevice[] {
-    const value = Storage.get<unknown>(TRUSTED_DEVICES_KEY)
-    if (!Array.isArray(value)) return []
-    return value
-      .filter((item): item is TrustedDevice => {
-        if (!item || typeof item !== "object") return false
-        const candidate = item as Partial<TrustedDevice>
-        return (
-          typeof candidate.tokenHash === "string" &&
-          candidate.tokenHash.length === 64 &&
-          typeof candidate.name === "string" &&
-          typeof candidate.createdAt === "number" &&
-          typeof candidate.lastUsedAt === "number"
-        )
-      })
-      .slice(-MAX_TRUSTED_DEVICES)
+    try {
+      const raw = Keychain.get(TRUSTED_DEVICES_KEY)
+      if (!raw) return []
+      const value: unknown = JSON.parse(raw)
+      if (!Array.isArray(value)) return []
+      return value
+        .filter((item): item is TrustedDevice => {
+          if (!item || typeof item !== "object") return false
+          const candidate = item as Partial<TrustedDevice>
+          return (
+            typeof candidate.tokenHash === "string" &&
+            candidate.tokenHash.length === 64 &&
+            typeof candidate.name === "string" &&
+            typeof candidate.createdAt === "number" &&
+            typeof candidate.lastUsedAt === "number"
+          )
+        })
+        .slice(-MAX_TRUSTED_DEVICES)
+    } catch {
+      return []
+    }
+  }
+
+  private saveTrustedDevices(devices: TrustedDevice[]): boolean {
+    try {
+      return Keychain.set(TRUSTED_DEVICES_KEY, JSON.stringify(devices))
+    } catch {
+      return false
+    }
   }
 
   private sanitizeName(name: string): string {
