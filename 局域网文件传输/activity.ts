@@ -4,6 +4,7 @@ import { LanTransferActivity, type TransferActivityState } from "./live_activity
 
 const UPDATE_INTERVAL = 5_000
 const EVENT_DEBOUNCE = 350
+const MIN_UPDATE_INTERVAL = 5_000
 const STALE_INTERVAL = 60 * 60 * 1_000
 
 export class TransferActivityController {
@@ -14,6 +15,7 @@ export class TransferActivityController {
   private activityStateListener: ((state: LiveActivityState) => void) | null = null
   private lastState = ""
   private lastDeviceCount = 0
+  private lastUpdateAt = 0
   private updateRequested = false
   private updateTask: Promise<void> | null = null
 
@@ -58,7 +60,7 @@ export class TransferActivityController {
     this.activityStateListener = activityStateListener
     this.lastState = JSON.stringify(state)
     this.lastDeviceCount = state.deviceCount
-    share.setActivityStateListener(() => this.scheduleEventUpdate())
+    share.setActivityStateListener(() => this.schedulePendingUpdate(EVENT_DEBOUNCE))
     this.scheduleUpdate()
     return true
   }
@@ -66,13 +68,18 @@ export class TransferActivityController {
   private scheduleUpdate() {
     this.timer = setTimeout(() => {
       if (!this.activity) return
-      this.requestUpdate()
+      this.schedulePendingUpdate()
       this.scheduleUpdate()
     }, UPDATE_INTERVAL)
   }
 
   private requestUpdate() {
     if (!this.activity) return
+    const cooldown = MIN_UPDATE_INTERVAL - (Date.now() - this.lastUpdateAt)
+    if (cooldown > 0) {
+      this.schedulePendingUpdate(cooldown)
+      return
+    }
     this.updateRequested = true
     if (this.updateTask) return
     this.updateTask = this.flushUpdates().finally(() => {
@@ -81,12 +88,14 @@ export class TransferActivityController {
     })
   }
 
-  private scheduleEventUpdate() {
-    if (this.eventTimer != null) clearTimeout(this.eventTimer)
+  private schedulePendingUpdate(minDelay = 0) {
+    if (!this.activity || this.eventTimer != null) return
+    const cooldown = Math.max(0, MIN_UPDATE_INTERVAL - (Date.now() - this.lastUpdateAt))
+    const delay = Math.max(minDelay, cooldown)
     this.eventTimer = setTimeout(() => {
       this.eventTimer = null
       this.requestUpdate()
-    }, EVENT_DEBOUNCE)
+    }, delay)
   }
 
   private async flushUpdates() {
@@ -111,6 +120,7 @@ export class TransferActivityController {
             ? { relevanceScore, staleDate: Date.now() + STALE_INTERVAL }
             : { relevanceScore },
         )
+        this.lastUpdateAt = Date.now()
         this.lastState = serialized
         this.lastDeviceCount = state.deviceCount
         if (deviceCountChanged) {
