@@ -1,4 +1,4 @@
-import { Notification, Pasteboard, Path } from "scripting"
+import { Notification, Path } from "scripting"
 import type { AppEvent, Broadcast, ChatMessage, IncomingPacket } from "../types"
 import { chatPageHtml } from "./html"
 
@@ -400,39 +400,32 @@ export class Share {
           address: client?.address,
         },
       })
-      void this.copyTextAndNotify(text, client)
+      void this.notifyIncomingText(text, client)
     }
   }
 
-  private async copyTextAndNotify(text: string, client?: ClientInfo) {
-    let copied = false
-    try {
-      await this.runInMain(() => Pasteboard.setString(text))
-      copied = (await this.runInMain(() => Pasteboard.getString())) === text
-    } catch {
-      // 剪贴板权限被拒绝时仍保留聊天消息，并继续尝试通知
-    }
-
+  private async notifyIncomingText(text: string, client?: ClientInfo) {
     const sender = [client?.name, client?.address].filter(Boolean).join(" · ") || "浏览器"
-    const preview = text.length > 160 ? `${text.slice(0, 160)}…` : text
+    const notificationText = text.length > 3_000 ? `${text.slice(0, 3_000)}…` : text
     try {
       await Notification.schedule({
-        title: copied ? "已复制跨平台文本" : "收到新的跨平台文本",
+        title: "收到跨平台文本",
         subtitle: sender,
-        body: preview,
+        body: notificationText,
         threadIdentifier: "lan-transfer-clipboard",
       })
-    } catch {
-      // 通知权限被拒绝不应影响剪贴板同步和聊天消息
-    }
-  }
-
-  private runInMain<T>(operation: () => Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      Thread.runInMain(() => {
-        void operation().then(resolve, reject)
+    } catch (error) {
+      this.inbox.push({
+        type: "incoming",
+        message: {
+          id: uid(),
+          ts: Date.now(),
+          role: "system",
+          kind: "text",
+          text: `通知发送失败：${String(error)}`,
+        },
       })
-    })
+    }
   }
 
   /** App 端发送文字：广播给浏览器并返回本地消息 */
