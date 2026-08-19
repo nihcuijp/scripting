@@ -79,6 +79,7 @@ export class Share {
   private pairAttempts = new Map<string, PairAttempt>()
   private trustedDevices: TrustedDevice[] = []
   private listener: ((e: AppEvent) => void) | null = null
+  private online = false
   private started = false
   // 上传收到的事件队列：registerAsyncHandler 的上下文里直接回调 UI（observable setValue）
   // 会导致整个进程崩溃，因此这里只入队，由页面在自己的定时器里 drainInbox 后再刷新
@@ -87,10 +88,16 @@ export class Share {
   /** 注入 App UI 的事件回调（连接状态、收到消息） */
   setListener(fn: ((e: AppEvent) => void) | null) {
     this.listener = fn
+    if (fn) fn({ type: "status", peer: "browser", online: this.online })
   }
 
   private emit(e: AppEvent) {
     this.listener?.(e)
+  }
+
+  private setOnline(online: boolean) {
+    this.online = online
+    this.emit({ type: "status", peer: "browser", online })
   }
 
   /** 页面定时拉取上传收到的事件，取走后队列清空 */
@@ -316,7 +323,7 @@ export class Share {
       },
       onDisconnected: (session) => {
         this.sessions = this.sessions.filter((s) => s !== session)
-        if (this.sessions.length === 0) this.emit({ type: "status", peer: "browser", online: false })
+        if (this.sessions.length === 0) this.setOnline(false)
       },
       handleText: (session, text) => this.handlePacket(session, text),
     })
@@ -338,7 +345,7 @@ export class Share {
       }
       this.sessions.push(session)
       session.writeText(JSON.stringify({ type: "auth_ok" }))
-      this.emit({ type: "status", peer: "browser", online: true })
+      this.setOnline(true)
       return
     }
     if (packet.type === "text") {
@@ -486,6 +493,7 @@ export class Share {
     this.downloads.clear()
     this.pairAttempts.clear()
     this.inbox = []
+    this.online = false
     this.started = false
     // 会话结束清空上传目录，避免收到的文件在 Documents 累积；下次 start 会重建
     try {
