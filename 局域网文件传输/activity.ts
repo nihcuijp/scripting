@@ -15,8 +15,7 @@ export class TransferActivityController {
       online: snapshot.online,
       address: share.link,
       pairingCode: share.pairingCode,
-      peer: snapshot.deviceName || "浏览器",
-      peerAddress: snapshot.address || "",
+      clients: snapshot.clients,
       sent: snapshot.sent,
       received: snapshot.received,
     }
