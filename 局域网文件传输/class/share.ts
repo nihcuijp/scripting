@@ -1,6 +1,7 @@
 import { Notification, Path } from "scripting"
 import type { AppEvent, Broadcast, ChatMessage, IncomingPacket } from "../types"
 import { chatPageHtml } from "./html"
+import { isStagedSharedFile } from "../shared_files"
 
 // 生成随机短 id
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
@@ -78,6 +79,9 @@ export class Share {
   private sessions: WebSocketSession[] = []
   private downloads = new Map<string, { path: string; key: string }>()
   private outgoingFiles: Extract<Broadcast, { type: "file" }>[] = []
+  private pendingOutgoingPaths: string[] = []
+  private temporaryOutgoingPaths = new Set<string>()
+  private flushingOutgoing = false
   private pairAttempts = new Map<string, PairAttempt>()
   private trustedDevices: TrustedDevice[] = []
   private authorizedClients = new Map<string, ClientInfo>()
@@ -150,6 +154,8 @@ export class Share {
     this.receivedCount = 0
     this.downloads.clear()
     this.outgoingFiles = []
+    this.pendingOutgoingPaths = []
+    this.temporaryOutgoingPaths.clear()
     this.pairAttempts.clear()
     this.trustedDevices = this.loadTrustedDevices()
     await FileManager.createDirectory(this.uploadDir, true)
@@ -378,6 +384,7 @@ export class Share {
       for (const packet of this.outgoingFiles) session.writeText(JSON.stringify(packet))
       this.setOnline(true, client)
       this.emitConnection(true, client)
+      void this.flushPendingFiles()
       return
     }
     if (packet.type === "text") {
@@ -471,6 +478,37 @@ export class Share {
       out.push(message)
     }
     return out
+  }
+
+  /** 分享表单文件进入当前服务器队列；已有连接时立即发送，否则等待首台浏览器。 */
+  queueFiles(paths: string[]) {
+    for (const path of paths) {
+      if (!path || this.pendingOutgoingPaths.includes(path)) continue
+      this.pendingOutgoingPaths.push(path)
+      if (isStagedSharedFile(path)) this.temporaryOutgoingPaths.add(path)
+    }
+    void this.flushPendingFiles()
+  }
+
+  private async flushPendingFiles() {
+    if (this.flushingOutgoing || this.sessions.length === 0 || this.pendingOutgoingPaths.length === 0) return
+    this.flushingOutgoing = true
+    try {
+      while (this.sessions.length > 0 && this.pendingOutgoingPaths.length > 0) {
+        const path = this.pendingOutgoingPaths.shift()!
+        try {
+          const messages = await this.sendFiles([path])
+          for (const message of messages) this.emit({ type: "outgoing", message })
+        } catch (error) {
+          this.emit({
+            type: "incoming",
+            message: { id: uid(), ts: Date.now(), role: "system", kind: "text", text: `分享文件发送失败：${String(error)}` },
+          })
+        }
+      }
+    } finally {
+      this.flushingOutgoing = false
+    }
   }
 
   get link(): string {
@@ -591,6 +629,7 @@ export class Share {
     this.sessions = []
     this.downloads.clear()
     this.outgoingFiles = []
+    this.pendingOutgoingPaths = []
     this.pairAttempts.clear()
     this.authorizedClients.clear()
     this.sessionClients.clear()
@@ -598,6 +637,12 @@ export class Share {
     this.online = false
     this.lastClient = null
     this.started = false
+    for (const path of this.temporaryOutgoingPaths) {
+      try {
+        if (FileManager.existsSync(path)) FileManager.removeSync(path)
+      } catch {}
+    }
+    this.temporaryOutgoingPaths.clear()
     // 会话结束清空上传目录，避免收到的文件在 Documents 累积；下次 start 会重建
     try {
       if (FileManager.existsSync(this.uploadDir)) FileManager.removeSync(this.uploadDir)

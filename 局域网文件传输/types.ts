@@ -52,3 +52,4 @@ export type AppEvent =
   | { type: "status"; peer: Peer; online: boolean; deviceName?: string; address?: string }
   | { type: "connection"; online: boolean; deviceName: string; address: string }
   | { type: "incoming"; message: ChatMessage }
+  | { type: "outgoing"; message: ChatMessage }

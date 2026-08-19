@@ -27,7 +27,7 @@ import type { AppEvent, ChatMessage } from "../types"
 const pageColor = { light: "#ffffff", dark: "#000000" } as const
 const barColor = { light: "#f2f2f7", dark: "#1c1c1e" } as const
 
-export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
+export function ChatPage() {
   const dismiss = Navigation.useDismiss()
   const messages = useObservable<ChatMessage[]>([])
   const input = useObservable<string>("")
@@ -35,7 +35,6 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
   const qr = useObservable<boolean>(false)
   const keyboardVisible = useKeyboardVisible()
   const proxyRef = useRef<ScrollViewProxy | null>(null)
-  const initialFilesSent = useRef(false)
 
   // 绑定服务端事件：状态 + 收到的消息
   useEffect(() => {
@@ -56,7 +55,7 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
           },
         ])
       }
-      else if (e.type === "incoming") messages.setValue([...messages.value, e.message])
+      else if (e.type === "incoming" || e.type === "outgoing") messages.setValue([...messages.value, e.message])
     })
     return () => share.setListener(null)
   }, [])
@@ -78,24 +77,6 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
       clearTimeout(timer)
     }
   }, [])
-
-  // 分享表单传入的文件要等至少一台浏览器上线后再广播，避免发给零个会话。
-  useEffect(() => {
-    if (!online.value || initialFilesSent.current || !initialFiles || initialFiles.length === 0) return
-    initialFilesSent.current = true
-    void sendFiles(initialFiles).catch((error) => {
-      messages.setValue([
-        ...messages.value,
-        {
-          id: `share-error-${Date.now()}`,
-          ts: Date.now(),
-          role: "system",
-          kind: "text",
-          text: `分享文件发送失败：${String(error)}`,
-        },
-      ])
-    })
-  }, [online.value])
 
   // 新消息滚到底
   useEffect(() => {
