@@ -95,6 +95,7 @@ var pairError = document.getElementById('pairError');
 var authToken = sessionStorage.getItem('lan-transfer-token') || '';
 var clientId = sessionStorage.getItem('lan-transfer-client-id') || '';
 var resuming = false;
+var seenMessageIds = Object.create(null);
 
 function deviceName(){
   var platform = navigator.userAgentData && navigator.userAgentData.platform;
@@ -147,8 +148,16 @@ function handleIncoming(raw){
   else if (p.type === 'auth_error'){
     resumeTrusted(true);
   }
-  else if (p.role === 'app' && p.type === 'text'){ addMessage({ role: 'app', kind: 'text', text: p.text }); }
-  else if (p.role === 'app' && p.type === 'file'){ addMessage({ role: 'app', kind: 'file', fileName: p.fileName, fileSize: p.fileSize, mime: p.mime, url: location.origin + p.url }); }
+  else if (p.role === 'app' && p.type === 'text'){
+    if (p.id && seenMessageIds[p.id]) return;
+    if (p.id) seenMessageIds[p.id] = true;
+    addMessage({ role: 'app', kind: 'text', text: p.text });
+  }
+  else if (p.role === 'app' && p.type === 'file'){
+    if (p.id && seenMessageIds[p.id]) return;
+    if (p.id) seenMessageIds[p.id] = true;
+    addMessage({ role: 'app', kind: 'file', fileName: p.fileName, fileSize: p.fileSize, mime: p.mime, url: location.origin + p.url });
+  }
 }
 
 pairInput.addEventListener('input', function(){ pairInput.value = pairInput.value.replace(/\\D/g, '').slice(0, 6); pairError.textContent = ''; });
