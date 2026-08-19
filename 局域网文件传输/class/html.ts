@@ -251,7 +251,7 @@ fileInput.onchange = function(){
 };
 async function uploadFile(file){
   addMessage({ role: 'browser', kind: 'file', fileName: file.name, fileSize: file.size, mime: file.type, url: URL.createObjectURL(file) });
-  var chunkSize = 512 * 1024;
+  var chunkSize = 256 * 1024;
   var total = Math.max(1, Math.ceil(file.size / chunkSize));
   var uploadId = Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2);
   try {
@@ -262,8 +262,8 @@ async function uploadFile(file){
       var url = '/upload-chunk?id=' + encodeURIComponent(uploadId) + '&index=' + index + '&total=' + total + '&name=' + encodeURIComponent(file.name || '未命名');
       await authorizedFetch(url, {
         method: 'POST',
-        headers: { 'content-type': file.type || 'application/octet-stream' },
-        body: chunk
+        headers: { 'content-type': 'application/json', 'x-file-type': file.type || 'application/octet-stream' },
+        body: JSON.stringify({ data: await blobToBase64(chunk) })
       });
     }
     statusEl.textContent = '● 已连接到设备';
@@ -272,6 +272,19 @@ async function uploadFile(file){
     statusEl.textContent = '● 上传失败：' + (err && err.message ? err.message : String(err));
     statusEl.className = 'status off';
   }
+}
+
+function blobToBase64(blob){
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    reader.onerror = function(){ reject(reader.error || new Error('读取附件失败')); };
+    reader.onload = function(){
+      var value = String(reader.result || '');
+      var comma = value.indexOf(',');
+      resolve(comma >= 0 ? value.slice(comma + 1) : value);
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 if (authToken && clientId){ document.body.classList.add('paired'); connect(); }

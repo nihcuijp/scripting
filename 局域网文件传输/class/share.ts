@@ -265,7 +265,8 @@ export class Share {
       return this.jsonResponse(200, "OK", { ok: true, token: this.sessionToken, clientId })
     })
 
-    // 文件上传（浏览器 → 本机）：512 KB 顺序分块，直接二进制追加写入，避免整文件 Base64 深拷贝挤爆内存
+    // 文件上传（浏览器 → 本机）：256 KB 顺序分块。
+    // 浏览器以小块 Base64 JSON 发送，绕开部分 Scripting 版本接收原始 Blob 时会终止脚本的问题。
     this.server.registerHandler("/upload-chunk", (req) => {
       try {
         if (!this.isAuthorized(req)) return this.unauthorizedResponse()
@@ -292,7 +293,7 @@ export class Share {
           upload = {
             path: this.uniquePath(name),
             name,
-            mime: headerValue(req.headers, "content-type") ?? "application/octet-stream",
+            mime: headerValue(req.headers, "x-file-type") ?? "application/octet-stream",
             nextIndex: 0,
             totalChunks,
             client,
@@ -303,9 +304,19 @@ export class Share {
           return this.jsonResponse(409, "Conflict", { ok: false, error: "上传分块顺序不正确，请重试" })
         }
 
+        const raw = req.body.toRawString("utf-8") ?? ""
+        if (raw.length > 500_000) return this.jsonResponse(413, "Payload Too Large", { ok: false, error: "上传分块过大" })
+        let base64 = ""
+        try {
+          const body = JSON.parse(raw) as { data?: unknown }
+          if (typeof body.data === "string") base64 = body.data
+        } catch {}
+        const chunk = base64 ? Data.fromBase64String(base64) : null
+        if (!chunk) return this.jsonResponse(400, "Bad Request", { ok: false, error: "上传分块数据无效" })
+
         const output = index === 0 ? FileEntity.openNewForWriting(upload.path) : FileEntity.openForMode(upload.path, "ab")
         try {
-          output.write(req.body)
+          output.write(chunk)
         } finally {
           output.close()
         }
