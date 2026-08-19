@@ -314,12 +314,8 @@ export class Share {
         const chunk = base64 ? Data.fromBase64String(base64) : null
         if (!chunk) return this.jsonResponse(400, "Bad Request", { ok: false, error: "上传分块数据无效" })
 
-        const output = index === 0 ? FileEntity.openNewForWriting(upload.path) : FileEntity.openForMode(upload.path, "ab")
-        try {
-          output.write(chunk)
-        } finally {
-          output.close()
-        }
+        if (index === 0) FileManager.writeAsDataSync(upload.path, chunk)
+        else FileManager.appendDataSync(upload.path, chunk)
         upload.nextIndex += 1
 
         const stat = FileManager.statSync(upload.path)
