@@ -3,11 +3,14 @@ import { share } from "./class/share"
 import { LanTransferActivity, type TransferActivityState } from "./live_activity"
 
 const UPDATE_INTERVAL = 5_000
+const EVENT_DEBOUNCE = 350
+const RECONCILE_DELAY = 2_500
 
 export class TransferActivityController {
   private activity: ReturnType<typeof LanTransferActivity> | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
-  private retryTimers: ReturnType<typeof setTimeout>[] = []
+  private eventTimer: ReturnType<typeof setTimeout> | null = null
+  private retryTimer: ReturnType<typeof setTimeout> | null = null
   private lastState = ""
   private lastDeviceCount = 0
   private updateRequested = false
@@ -45,7 +48,7 @@ export class TransferActivityController {
     this.activity = activity
     this.lastState = JSON.stringify(state)
     this.lastDeviceCount = state.deviceCount
-    share.setActivityStateListener(() => this.requestUpdate(true))
+    share.setActivityStateListener(() => this.scheduleEventUpdate())
     this.scheduleUpdate()
     return true
   }
@@ -67,6 +70,14 @@ export class TransferActivityController {
       this.updateTask = null
       if (this.updateRequested) this.requestUpdate()
     })
+  }
+
+  private scheduleEventUpdate() {
+    if (this.eventTimer != null) clearTimeout(this.eventTimer)
+    this.eventTimer = setTimeout(() => {
+      this.eventTimer = null
+      this.requestUpdate(true)
+    }, EVENT_DEBOUNCE)
   }
 
   private async flushUpdates() {
@@ -111,22 +122,23 @@ export class TransferActivityController {
   }
 
   private scheduleReconciliation(serialized: string) {
-    for (const timer of this.retryTimers) clearTimeout(timer)
-    this.retryTimers = [800, 2_500].map(delay =>
-      setTimeout(() => {
-        if (!this.activity || JSON.stringify(this.state()) !== serialized) return
-        console.info(`实时活动状态重发：${delay}ms`)
-        this.requestUpdate(true)
-      }, delay),
-    )
+    if (this.retryTimer != null) clearTimeout(this.retryTimer)
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      if (!this.activity || JSON.stringify(this.state()) !== serialized) return
+      console.info(`实时活动状态重发：${RECONCILE_DELAY}ms`)
+      this.requestUpdate(true)
+    }, RECONCILE_DELAY)
   }
 
   async stop(): Promise<void> {
     share.setActivityStateListener(null)
     if (this.timer != null) clearTimeout(this.timer)
     this.timer = null
-    for (const timer of this.retryTimers) clearTimeout(timer)
-    this.retryTimers = []
+    if (this.eventTimer != null) clearTimeout(this.eventTimer)
+    this.eventTimer = null
+    if (this.retryTimer != null) clearTimeout(this.retryTimer)
+    this.retryTimer = null
     this.updateRequested = false
     this.forceUpdateRequested = false
     if (this.updateTask) await this.updateTask
