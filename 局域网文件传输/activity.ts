@@ -78,24 +78,35 @@ export class TransferActivityController {
       const serialized = JSON.stringify(state)
       if (!force && serialized === this.lastState) continue
       const deviceCountChanged = state.deviceCount !== this.lastDeviceCount
+      const previousDeviceCount = this.lastDeviceCount
       try {
-        if (deviceCountChanged) {
-          const [activityState, backgroundActive] = await Promise.all([
-            this.activity.getActivityState(),
-            BackgroundKeeper.isActive,
-          ])
-          console.info(
-            `实时活动设备变化：${this.lastDeviceCount} → ${state.deviceCount}，活动=${String(activityState)}，后台保活=${backgroundActive}`,
-          )
-        }
         await this.activity.update(state, { relevanceScore: state.online ? 90 : 80 })
         this.lastState = serialized
         this.lastDeviceCount = state.deviceCount
-        if (deviceCountChanged) this.scheduleReconciliation(serialized)
+        if (deviceCountChanged) {
+          this.scheduleReconciliation(serialized)
+          void this.logRuntimeState(previousDeviceCount, state.deviceCount)
+        }
       } catch (error) {
         console.warn(`实时活动更新失败：${String(error)}`)
         break
       }
+    }
+  }
+
+  private async logRuntimeState(previousDeviceCount: number, deviceCount: number) {
+    const activity = this.activity
+    if (!activity) return
+    try {
+      const [activityState, backgroundActive] = await Promise.all([
+        activity.getActivityState(),
+        BackgroundKeeper.isActive,
+      ])
+      console.info(
+        `实时活动设备变化：${previousDeviceCount} → ${deviceCount}，活动=${String(activityState)}，后台保活=${backgroundActive}`,
+      )
+    } catch (error) {
+      console.warn(`实时活动诊断失败（不影响更新）：${String(error)}`)
     }
   }
 
