@@ -471,10 +471,17 @@ export class Share {
   }
 
   get activitySnapshot() {
+    const clients: ClientInfo[] = []
+    const seen = new Set<string>()
+    for (const client of this.sessionClients.values()) {
+      const key = `${client.name}\u0000${client.address}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      clients.push({ name: client.name, address: client.address })
+    }
     return {
-      online: this.online,
-      deviceName: this.lastClient?.name,
-      address: this.lastClient?.address,
+      online: clients.length > 0,
+      clients,
       sent: this.sentCount,
       received: this.receivedCount,
     }
