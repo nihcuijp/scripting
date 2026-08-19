@@ -40,20 +40,20 @@ export function ChatPage({ initialFiles }: { initialFiles?: string[] }) {
   useEffect(() => {
     share.setListener((e: AppEvent) => {
       if (e.type === "status") {
-        if (e.online !== online.value) {
-          const timestamp = Date.now()
-          messages.setValue([
-            ...messages.value,
-            {
-              id: `status-${timestamp}-${e.online ? "online" : "offline"}`,
-              ts: timestamp,
-              role: "system",
-              kind: "text",
-              text: e.online ? "浏览器已连接" : "浏览器已断开",
-            },
-          ])
-        }
         online.setValue(e.online)
+      }
+      else if (e.type === "connection") {
+        const timestamp = Date.now()
+        messages.setValue([
+          ...messages.value,
+          {
+            id: `connection-${timestamp}-${e.online ? "online" : "offline"}`,
+            ts: timestamp,
+            role: "system",
+            kind: "text",
+            text: `${e.deviceName}（${e.address}）${e.online ? "已连接" : "已断开"}`,
+          },
+        ])
       }
       else if (e.type === "incoming") messages.setValue([...messages.value, e.message])
     })

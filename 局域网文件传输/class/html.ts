@@ -93,6 +93,7 @@ var rememberInput = document.getElementById('rememberInput');
 var pairBtn = document.getElementById('pairBtn');
 var pairError = document.getElementById('pairError');
 var authToken = sessionStorage.getItem('lan-transfer-token') || '';
+var clientId = sessionStorage.getItem('lan-transfer-client-id') || '';
 var resuming = false;
 
 function deviceName(){
@@ -122,11 +123,11 @@ function addMessage(m){
 
 var ws = null, reconnectTimer = null, wsAuthenticated = false;
 function connect(){
-  if (!authToken) return;
+  if (!authToken || !clientId) return;
   wsAuthenticated = false;
   try { ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws'); }
   catch (e){ scheduleReconnect(); return; }
-  ws.onopen = function(){ ws.send(JSON.stringify({ type: 'auth', token: authToken })); };
+  ws.onopen = function(){ ws.send(JSON.stringify({ type: 'auth', token: authToken, clientId: clientId })); };
   ws.onclose = function(){
     var wasAuthenticated = wsAuthenticated;
     wsAuthenticated = false;
@@ -163,9 +164,11 @@ pairForm.onsubmit = function(e){
     body: JSON.stringify({ code: code, remember: rememberInput.checked, deviceName: deviceName() })
   }).then(function(res){ return res.json().catch(function(){ return {}; }).then(function(body){ return { status: res.status, body: body }; }); })
     .then(function(result){
-      if (result.status !== 200 || !result.body.token) throw new Error(result.body.error || '配对失败');
+      if (result.status !== 200 || !result.body.token || !result.body.clientId) throw new Error(result.body.error || '配对失败');
       authToken = result.body.token;
+      clientId = result.body.clientId;
       sessionStorage.setItem('lan-transfer-token', authToken);
+      sessionStorage.setItem('lan-transfer-client-id', clientId);
       document.body.classList.add('paired');
       pairInput.value = '';
       connect();
@@ -176,7 +179,9 @@ pairForm.onsubmit = function(e){
 
 function clearPairing(message){
   authToken = '';
+  clientId = '';
   sessionStorage.removeItem('lan-transfer-token');
+  sessionStorage.removeItem('lan-transfer-client-id');
   document.body.classList.remove('paired');
   pairError.textContent = message || '';
   statusEl.textContent = '● 等待配对…';
@@ -190,7 +195,9 @@ function resumeTrusted(showError){
   if (resuming) return;
   resuming = true;
   authToken = '';
+  clientId = '';
   sessionStorage.removeItem('lan-transfer-token');
+  sessionStorage.removeItem('lan-transfer-client-id');
   if (reconnectTimer){ clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (ws){ try { ws.close(); } catch (e){} ws = null; }
   statusEl.textContent = '● 正在恢复受信任会话…';
@@ -201,9 +208,11 @@ function resumeTrusted(showError){
     body: JSON.stringify({ deviceName: deviceName() })
   }).then(function(res){ return res.json().catch(function(){ return {}; }).then(function(body){ return { status: res.status, body: body }; }); })
     .then(function(result){
-      if (result.status !== 200 || !result.body.token) throw new Error(result.body.error || '自动连接失败');
+      if (result.status !== 200 || !result.body.token || !result.body.clientId) throw new Error(result.body.error || '自动连接失败');
       authToken = result.body.token;
+      clientId = result.body.clientId;
       sessionStorage.setItem('lan-transfer-token', authToken);
+      sessionStorage.setItem('lan-transfer-client-id', clientId);
       document.body.classList.add('paired');
       connect();
     })
@@ -250,7 +259,7 @@ function uploadFile(file){
   }).catch(function(){});
 }
 
-if (authToken){ document.body.classList.add('paired'); connect(); }
+if (authToken && clientId){ document.body.classList.add('paired'); connect(); }
 else { document.body.classList.add('paired'); resumeTrusted(false); }
 </script>
 </body>

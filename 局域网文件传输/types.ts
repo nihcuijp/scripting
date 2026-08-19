@@ -34,7 +34,7 @@ export type Peer = "app" | "browser"
 
 /** WebSocket 上传输的指令包（仅浏览器→服务端） */
 export type IncomingPacket =
-  | { type: "auth"; token: string }
+  | { type: "auth"; token: string; clientId: string }
   | { type: "text"; text: string; id: string; ts: number }
   | { type: "ping" }
 
@@ -46,5 +46,6 @@ export type Broadcast =
 
 /** App 端注入页面的本地事件 */
 export type AppEvent =
-  | { type: "status"; peer: Peer; online: boolean }
+  | { type: "status"; peer: Peer; online: boolean; deviceName?: string; address?: string }
+  | { type: "connection"; online: boolean; deviceName: string; address: string }
   | { type: "incoming"; message: ChatMessage }

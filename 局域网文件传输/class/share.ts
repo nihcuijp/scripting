@@ -23,6 +23,7 @@ function randomPairingCode(): string {
 
 type PairAttempt = { failures: number; windowStart: number; blockedUntil: number }
 type TrustedDevice = { tokenHash: string; name: string; createdAt: number; lastUsedAt: number }
+type ClientInfo = { name: string; address: string }
 
 const TRUSTED_DEVICES_KEY = "lan-transfer.trustedDevices"
 const MAX_TRUSTED_DEVICES = 20
@@ -78,8 +79,11 @@ export class Share {
   private downloads = new Map<string, { path: string; key: string }>()
   private pairAttempts = new Map<string, PairAttempt>()
   private trustedDevices: TrustedDevice[] = []
+  private authorizedClients = new Map<string, ClientInfo>()
+  private sessionClients = new Map<WebSocketSession, ClientInfo>()
   private listener: ((e: AppEvent) => void) | null = null
   private online = false
+  private lastClient: ClientInfo | null = null
   private started = false
   // 上传收到的事件队列：registerAsyncHandler 的上下文里直接回调 UI（observable setValue）
   // 会导致整个进程崩溃，因此这里只入队，由页面在自己的定时器里 drainInbox 后再刷新
@@ -88,16 +92,37 @@ export class Share {
   /** 注入 App UI 的事件回调（连接状态、收到消息） */
   setListener(fn: ((e: AppEvent) => void) | null) {
     this.listener = fn
-    if (fn) fn({ type: "status", peer: "browser", online: this.online })
+    if (fn) {
+      fn({ type: "status", peer: "browser", online: this.online, deviceName: this.lastClient?.name, address: this.lastClient?.address })
+      if (this.online && this.lastClient) {
+        fn({ type: "connection", online: true, deviceName: this.lastClient.name, address: this.lastClient.address })
+      }
+    }
   }
 
   private emit(e: AppEvent) {
     this.listener?.(e)
   }
 
-  private setOnline(online: boolean) {
+  private setOnline(online: boolean, client?: ClientInfo) {
     this.online = online
-    this.emit({ type: "status", peer: "browser", online })
+    if (client) this.lastClient = client
+    this.emit({ type: "status", peer: "browser", online, deviceName: client?.name, address: client?.address })
+  }
+
+  private emitConnection(online: boolean, client: ClientInfo) {
+    this.emit({ type: "connection", online, deviceName: client.name, address: client.address })
+  }
+
+  private authorizeClient(name: string, address: string): string {
+    const clientId = randomToken()
+    this.authorizedClients.set(clientId, { name, address })
+    while (this.authorizedClients.size > 50) {
+      const oldest = this.authorizedClients.keys().next().value
+      if (typeof oldest !== "string") break
+      this.authorizedClients.delete(oldest)
+    }
+    return clientId
   }
 
   /** 页面定时拉取上传收到的事件，取走后队列清空 */
@@ -188,11 +213,12 @@ export class Share {
       }
 
       this.pairAttempts.delete(client)
+      const clientId = this.authorizeClient(deviceName, client)
       if (!remember) {
         return this.jsonResponse(
           200,
           "OK",
-          { ok: true, token: this.sessionToken },
+          { ok: true, token: this.sessionToken, clientId },
           { "set-cookie": "lan_transfer_trust=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict" },
         )
       }
@@ -208,7 +234,7 @@ export class Share {
       return this.jsonResponse(
         200,
         "OK",
-        { ok: true, token: this.sessionToken },
+        { ok: true, token: this.sessionToken, clientId },
         { "set-cookie": `lan_transfer_trust=${deviceToken}; Max-Age=31536000; Path=/; HttpOnly; SameSite=Strict` },
       )
     })
@@ -232,7 +258,8 @@ export class Share {
       if (index < 0) return this.unauthorizedResponse(true)
       this.trustedDevices[index] = { ...this.trustedDevices[index], name: deviceName, lastUsedAt: Date.now() }
       this.saveTrustedDevices(this.trustedDevices)
-      return this.jsonResponse(200, "OK", { ok: true, token: this.sessionToken })
+      const clientId = this.authorizeClient(deviceName, req.address ?? "未知 IP")
+      return this.jsonResponse(200, "OK", { ok: true, token: this.sessionToken, clientId })
     })
 
     // 文件上传（浏览器 → 本机）：浏览器直传原始字节，文件名走 ?name=，类型走 content-type
@@ -322,8 +349,11 @@ export class Share {
         }, 5_000)
       },
       onDisconnected: (session) => {
+        const client = this.sessionClients.get(session)
+        this.sessionClients.delete(session)
         this.sessions = this.sessions.filter((s) => s !== session)
-        if (this.sessions.length === 0) this.setOnline(false)
+        if (client) this.emitConnection(false, client)
+        if (this.sessions.length === 0) this.setOnline(false, client)
       },
       handleText: (session, text) => this.handlePacket(session, text),
     })
@@ -338,14 +368,17 @@ export class Share {
       return
     }
     if (this.sessions.indexOf(session) < 0) {
-      if (packet.type !== "auth" || packet.token !== this.sessionToken) {
+      const client = packet.type === "auth" ? this.authorizedClients.get(packet.clientId) : undefined
+      if (packet.type !== "auth" || packet.token !== this.sessionToken || !client) {
         session.writeText(JSON.stringify({ type: "auth_error" }))
         session.close()
         return
       }
       this.sessions.push(session)
+      this.sessionClients.set(session, client)
       session.writeText(JSON.stringify({ type: "auth_ok" }))
-      this.setOnline(true)
+      this.setOnline(true, client)
+      this.emitConnection(true, client)
       return
     }
     if (packet.type === "text") {
@@ -492,8 +525,11 @@ export class Share {
     this.sessions = []
     this.downloads.clear()
     this.pairAttempts.clear()
+    this.authorizedClients.clear()
+    this.sessionClients.clear()
     this.inbox = []
     this.online = false
+    this.lastClient = null
     this.started = false
     // 会话结束清空上传目录，避免收到的文件在 Documents 累积；下次 start 会重建
     try {
