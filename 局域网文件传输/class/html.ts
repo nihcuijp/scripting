@@ -224,7 +224,7 @@ function resumeTrusted(showError){
 
 function authorizedFetch(url, options){
   options = options || {};
-  options.headers = Object.assign({}, options.headers || {}, { authorization: 'Bearer ' + authToken, 'x-client-id': clientId });
+  options.headers = Object.assign({}, options.headers || {}, { 'x-session-token': authToken, 'x-client-id': clientId });
   return fetch(url, options).then(function(res){
     if (res.status === 401){ clearPairing('配对会话已失效，请重新配对'); throw new Error('未授权'); }
     if (!res.ok) throw new Error('请求失败（' + res.status + '）');
@@ -247,44 +247,15 @@ attachBtn.onclick = function(){ fileInput.click(); };
 fileInput.onchange = function(){
   var files = Array.prototype.slice.call(fileInput.files || []);
   fileInput.value = '';
-  files.reduce(function(chain, file){ return chain.then(function(){ return uploadFile(file); }); }, Promise.resolve());
+  files.forEach(uploadFile);
 };
-async function uploadFile(file){
+function uploadFile(file){
   addMessage({ role: 'browser', kind: 'file', fileName: file.name, fileSize: file.size, mime: file.type, url: URL.createObjectURL(file) });
-  var chunkSize = 256 * 1024;
-  var total = Math.max(1, Math.ceil(file.size / chunkSize));
-  var uploadId = Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.random().toString(36).slice(2);
-  try {
-    for (var index = 0; index < total; index++) {
-      var start = index * chunkSize;
-      var chunk = file.slice(start, Math.min(file.size, start + chunkSize));
-      statusEl.textContent = '● 正在上传 ' + file.name + '（' + Math.round(index * 100 / total) + '%）';
-      var url = '/upload-chunk?id=' + encodeURIComponent(uploadId) + '&index=' + index + '&total=' + total + '&name=' + encodeURIComponent(file.name || '未命名');
-      await authorizedFetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-file-type': file.type || 'application/octet-stream' },
-        body: JSON.stringify({ data: await blobToBase64(chunk) })
-      });
-    }
-    statusEl.textContent = '● 已连接到设备';
-    statusEl.className = 'status on';
-  } catch (err) {
-    statusEl.textContent = '● 上传失败：' + (err && err.message ? err.message : String(err));
-    statusEl.className = 'status off';
-  }
-}
-
-function blobToBase64(blob){
-  return new Promise(function(resolve, reject){
-    var reader = new FileReader();
-    reader.onerror = function(){ reject(reader.error || new Error('读取附件失败')); };
-    reader.onload = function(){
-      var value = String(reader.result || '');
-      var comma = value.indexOf(',');
-      resolve(comma >= 0 ? value.slice(comma + 1) : value);
-    };
-    reader.readAsDataURL(blob);
-  });
+  authorizedFetch('/upload?name=' + encodeURIComponent(file.name || '未命名'), {
+    method: 'POST',
+    headers: { 'content-type': file.type || 'application/octet-stream' },
+    body: file
+  }).catch(function(){});
 }
 
 if (authToken && clientId){ document.body.classList.add('paired'); connect(); }
