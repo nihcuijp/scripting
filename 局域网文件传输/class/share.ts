@@ -87,6 +87,7 @@ export class Share {
   private authorizedClients = new Map<string, ClientInfo>()
   private sessionClients = new Map<WebSocketSession, ClientInfo>()
   private listener: ((e: AppEvent) => void) | null = null
+  private activityStateListener: (() => void) | null = null
   private online = false
   private lastClient: ClientInfo | null = null
   private started = false
@@ -111,10 +112,19 @@ export class Share {
     this.listener?.(e)
   }
 
+  setActivityStateListener(fn: (() => void) | null) {
+    this.activityStateListener = fn
+  }
+
+  private notifyActivityStateChanged() {
+    this.activityStateListener?.()
+  }
+
   private setOnline(online: boolean, client?: ClientInfo) {
     this.online = online
     if (client) this.lastClient = client
     this.emit({ type: "status", peer: "browser", online, deviceName: client?.name, address: client?.address })
+    this.notifyActivityStateChanged()
   }
 
   private emitConnection(online: boolean, client: ClientInfo) {
@@ -313,6 +323,7 @@ export class Share {
         }
         this.inbox.push({ type: "incoming", message })
         this.receivedCount++
+        this.notifyActivityStateChanged()
         return this.jsonResponse(200, "OK", { ok: true })
       } catch (e) {
         // 上传异常不能拖垮整个脚本运行时，返回 500 供浏览器端感知
@@ -355,6 +366,7 @@ export class Share {
         const client = this.sessionClients.get(session)
         this.sessionClients.delete(session)
         this.sessions = this.sessions.filter((s) => s !== session)
+        this.notifyActivityStateChanged()
         if (client) this.emitConnection(false, client)
         if (this.sessions.length === 0) this.setOnline(false, client)
       },
@@ -392,6 +404,7 @@ export class Share {
       const text = packet.text.slice(0, 100_000)
       const client = this.sessionClients.get(session)
       this.receivedCount++
+      this.notifyActivityStateChanged()
       this.emit({
         type: "incoming",
         message: {
@@ -438,6 +451,7 @@ export class Share {
     const ts = Date.now()
     this.broadcast({ role: "app", type: "text", text, id, ts })
     this.sentCount++
+    this.notifyActivityStateChanged()
     return { id, ts, role: "app", kind: "text", text }
   }
 
@@ -475,6 +489,7 @@ export class Share {
       this.outgoingFiles.push(packet)
       this.broadcast(packet)
       this.sentCount++
+      this.notifyActivityStateChanged()
       out.push(message)
     }
     return out
@@ -637,6 +652,7 @@ export class Share {
     this.online = false
     this.lastClient = null
     this.started = false
+    this.activityStateListener = null
     for (const path of this.temporaryOutgoingPaths) {
       try {
         if (FileManager.existsSync(path)) FileManager.removeSync(path)
