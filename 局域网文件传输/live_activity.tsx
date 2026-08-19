@@ -15,6 +15,7 @@ import {
 export const TRANSFER_ACTIVITY_NAME = "LanTransferActivity"
 
 export type TransferActivityState = {
+  revision: number
   online: boolean
   address: string
   pairingCode: string

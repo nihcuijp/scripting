@@ -5,12 +5,14 @@ import { LanTransferActivity, type TransferActivityState } from "./live_activity
 const UPDATE_INTERVAL = 5_000
 const EVENT_DEBOUNCE = 350
 const RECONCILE_DELAY = 2_500
+const STALE_INTERVAL = 60 * 60 * 1_000
 
 export class TransferActivityController {
   private activity: ReturnType<typeof LanTransferActivity> | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private eventTimer: ReturnType<typeof setTimeout> | null = null
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private revision = 0
   private lastState = ""
   private lastDeviceCount = 0
   private updateRequested = false
@@ -25,6 +27,7 @@ export class TransferActivityController {
       return client ? `${client.name} · ${client.address}` : ""
     }
     return {
+      revision: this.revision,
       online: snapshot.online,
       address: share.link,
       pairingCode: share.pairingCode,
@@ -44,7 +47,10 @@ export class TransferActivityController {
     if (!(await LiveActivity.areActivitiesEnabled())) return false
     const activity = LanTransferActivity()
     const state = this.state()
-    if (!(await activity.start(state, { relevanceScore: 80 }))) return false
+    if (!(await activity.start(state, {
+      relevanceScore: 80,
+      staleDate: Date.now() + STALE_INTERVAL,
+    }))) return false
     this.activity = activity
     this.lastState = JSON.stringify(state)
     this.lastDeviceCount = state.deviceCount
@@ -91,11 +97,15 @@ export class TransferActivityController {
       const deviceCountChanged = state.deviceCount !== this.lastDeviceCount
       const previousDeviceCount = this.lastDeviceCount
       try {
-        await this.activity.update(state, { relevanceScore: state.online ? 90 : 80 })
-        this.lastState = serialized
+        const updatedState = { ...state, revision: ++this.revision }
+        await this.activity.update(updatedState, {
+          relevanceScore: state.online ? 90 : 80,
+          staleDate: Date.now() + STALE_INTERVAL,
+        })
+        this.lastState = JSON.stringify(updatedState)
         this.lastDeviceCount = state.deviceCount
         if (deviceCountChanged) {
-          this.scheduleReconciliation(serialized)
+          this.scheduleReconciliation(this.lastState)
           void this.logRuntimeState(previousDeviceCount, state.deviceCount)
         }
       } catch (error) {
