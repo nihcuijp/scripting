@@ -8,6 +8,7 @@ export class TransferActivityController {
   private activity: ReturnType<typeof LanTransferActivity> | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private lastState = ""
+  private lastDeviceCount = 0
   private updateRequested = false
   private updateTask: Promise<void> | null = null
 
@@ -41,6 +42,7 @@ export class TransferActivityController {
     if (!(await activity.start(state, { relevanceScore: 80 }))) return false
     this.activity = activity
     this.lastState = JSON.stringify(state)
+    this.lastDeviceCount = state.deviceCount
     share.setActivityStateListener(() => this.requestUpdate())
     this.scheduleUpdate()
     return true
@@ -71,13 +73,33 @@ export class TransferActivityController {
       const serialized = JSON.stringify(state)
       if (serialized === this.lastState) continue
       try {
-        await this.activity.update(state, { relevanceScore: state.online ? 90 : 80 })
+        if (state.deviceCount !== this.lastDeviceCount) {
+          await this.replaceActivity(state)
+        } else {
+          await this.activity.update(state, { relevanceScore: state.online ? 90 : 80 })
+        }
         this.lastState = serialized
+        this.lastDeviceCount = state.deviceCount
       } catch (error) {
         console.warn(`实时活动更新失败：${String(error)}`)
         break
       }
     }
+  }
+
+  private async replaceActivity(state: TransferActivityState): Promise<void> {
+    const current = this.activity
+    if (!current) return
+    await current.end(state, { dismissTimeInterval: 0 })
+    if (this.activity !== current) return
+    this.activity = null
+
+    const replacement = LanTransferActivity()
+    const started = await replacement.start(state, {
+      relevanceScore: state.online ? 90 : 80,
+    })
+    if (!started) throw new Error("实时活动重建失败")
+    this.activity = replacement
   }
 
   async stop(): Promise<void> {
