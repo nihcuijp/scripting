@@ -49,7 +49,7 @@ function ScriptTile(props: { item: ManagedScript; index: number }) {
             clipShape={{ type: "rect", cornerRadius: 2, style: "continuous" }}
           />
           <Text
-            font={9}
+            font={12}
             fontWeight="medium"
             foregroundStyle="label"
             lineLimit={1}
