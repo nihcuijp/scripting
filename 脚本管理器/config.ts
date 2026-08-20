@@ -1,10 +1,15 @@
-import { Widget } from "scripting"
+import { Path, Widget } from "scripting"
 
 export type ManagedScript = {
   id: string
   name: string
   symbol: string
   visible: boolean
+}
+
+export type InstalledScript = {
+  name: string
+  symbol: string
 }
 
 const STORAGE_KEY = "managed-scripts-v1"
@@ -53,4 +58,38 @@ export function saveScripts(items: ManagedScript[]): boolean {
 
 export function makeID(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+export async function loadInstalledScripts(): Promise<InstalledScript[]> {
+  const root = FileManager.scriptsDirectory
+  const entries = await FileManager.readDirectory(root)
+  const scripts = await Promise.all(entries.map(async entry => {
+    try {
+      const directory = Path.isAbsolute(entry) ? entry : Path.join(root, entry)
+      if (!(await FileManager.isDirectory(directory))) return null
+
+      const metadataPath = Path.join(directory, "script.json")
+      if (!(await FileManager.exists(metadataPath))) return null
+
+      const metadata = JSON.parse(await FileManager.readAsString(metadataPath)) as {
+        name?: unknown
+        icon?: unknown
+      }
+      if (typeof metadata.name !== "string" || metadata.name.trim().length === 0) {
+        return null
+      }
+      return {
+        name: metadata.name.trim(),
+        symbol: typeof metadata.icon === "string" && metadata.icon.trim().length > 0
+          ? metadata.icon.trim()
+          : "doc.text.fill",
+      }
+    } catch {
+      return null
+    }
+  }))
+
+  return scripts
+    .filter((script): script is InstalledScript => script != null)
+    .sort((a, b) => a.name.localeCompare(b.name))
 }

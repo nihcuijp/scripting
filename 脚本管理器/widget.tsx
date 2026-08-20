@@ -10,17 +10,59 @@ import {
 } from "scripting"
 import { loadScripts, type ManagedScript } from "./config"
 
-const COLUMN_COUNT = 4
+const SMALL_ACCENTS = [
+  "#5B7CFA",
+  "#9B6DFF",
+  "#E47C3C",
+  "#2E9D70",
+] as const
 
 function capacity(): number {
   if (Widget.family === "systemLarge" || Widget.family === "systemExtraLarge") {
-    return 12
+    return 20
   }
-  if (Widget.family === "systemMedium") return 8
+  if (Widget.family === "systemMedium") return 12
+  if (Widget.family === "systemSmall") return 6
   return 4
 }
 
-function ScriptTile(props: { item: ManagedScript }) {
+function columnCount(): number {
+  return Widget.family === "systemSmall" ? 1 : 4
+}
+
+function ScriptTile(props: { item: ManagedScript; index: number }) {
+  const isSmall = Widget.family === "systemSmall"
+  if (isSmall) {
+    const colorIndex = props.index % SMALL_ACCENTS.length
+    return (
+      <Link url={Script.createRunURLScheme(props.item.name)}>
+        <HStack
+          spacing={4}
+          padding={{ horizontal: 5, vertical: 3 }}
+          frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
+          background="rgba(118,118,128,0.09)"
+          clipShape={{ type: "rect", cornerRadius: 7, style: "continuous" }}
+        >
+          <VStack
+            frame={{ width: 3, maxHeight: "infinity" }}
+            background={SMALL_ACCENTS[colorIndex]}
+            clipShape={{ type: "rect", cornerRadius: 2, style: "continuous" }}
+          />
+          <Text
+            font={9}
+            fontWeight="medium"
+            foregroundStyle="label"
+            lineLimit={1}
+            multilineTextAlignment="center"
+            frame={{ maxWidth: "infinity" }}
+          >
+            {props.item.name}
+          </Text>
+        </HStack>
+      </Link>
+    )
+  }
+
   return (
     <Link url={Script.createRunURLScheme(props.item.name)}>
       <VStack
@@ -50,26 +92,33 @@ function EmptyTile() {
 }
 
 function ScriptGrid(props: { items: ManagedScript[] }) {
+  const columns = columnCount()
   const rows: ManagedScript[][] = []
-  for (let index = 0; index < capacity(); index += COLUMN_COUNT) {
-    rows.push(props.items.slice(index, index + COLUMN_COUNT))
+  for (let index = 0; index < capacity(); index += columns) {
+    rows.push(props.items.slice(index, index + columns))
   }
 
   return (
     <VStack
-      spacing={6}
-      padding={10}
+      spacing={Widget.family === "systemSmall" ? 4 : 6}
+      padding={Widget.family === "systemSmall" ? 6 : 10}
       widgetBackground="systemBackground"
       frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
     >
       {rows.map((row, rowIndex) => (
         <HStack
           key={`row-${rowIndex}`}
-          spacing={4}
+          spacing={Widget.family === "systemSmall" ? 4 : 6}
           frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
         >
-          {row.map(item => <ScriptTile key={item.id} item={item} />)}
-          {Array.from({ length: COLUMN_COUNT - row.length }, (_, index) => (
+          {row.map((item, itemIndex) => (
+            <ScriptTile
+              key={item.id}
+              item={item}
+              index={rowIndex * columns + itemIndex}
+            />
+          ))}
+          {Array.from({ length: columns - row.length }, (_, index) => (
             <EmptyTile key={`empty-${rowIndex}-${index}`} />
           ))}
         </HStack>
