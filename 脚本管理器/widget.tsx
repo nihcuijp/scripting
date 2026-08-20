@@ -40,8 +40,10 @@ function ScriptTile(props: { item: ManagedScript; index: number }) {
           spacing={4}
           padding={{ horizontal: 5, vertical: 3 }}
           frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
-          background="rgba(118,118,128,0.09)"
-          clipShape={{ type: "rect", cornerRadius: 7, style: "continuous" }}
+          background={{
+            style: "ultraThinMaterial",
+            shape: { type: "rect", cornerRadius: 7, style: "continuous" },
+          }}
         >
           <VStack
             frame={{ width: 3, maxHeight: "infinity" }}
