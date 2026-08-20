@@ -12,20 +12,9 @@ function errorMessage(error: unknown): string {
 }
 
 function makeClockState(now = new Date()): ClockState {
-  const start = new Date(now)
-  start.setHours(0, 0, 0, 0)
-
-  const end = new Date(start)
-  end.setDate(end.getDate() + 1)
-
   return {
-    dayStart: start.getTime(),
-    dayEnd: end.getTime(),
-    dateText: new Intl.DateTimeFormat("zh-CN", {
-      month: "long",
-      day: "numeric",
-      weekday: "short",
-    }).format(now),
+    startedAt: now.getTime(),
+    endsAt: now.getTime() + 24 * 60 * 60 * 1000,
   }
 }
 
@@ -48,7 +37,7 @@ async function discoverNewActivityId(before: string[]): Promise<string | null> {
     const ids = await LiveActivity.getAllActivitiesIds()
     const created = ids.find(id => !known.has(id))
     if (created != null) return created
-    await new Promise(resolve => setTimeout(resolve, 150))
+    await new Promise<void>(resolve => setTimeout(() => resolve(), 150))
   }
   return null
 }
@@ -64,7 +53,7 @@ async function startClock(): Promise<void> {
   const state = makeClockState()
   const activity = IslandClockActivity()
   const started = await activity.start(state, {
-    staleDate: state.dayEnd,
+    staleDate: state.endsAt,
     relevanceScore: 100,
   })
   if (!started) {
@@ -89,7 +78,9 @@ async function stopClock(): Promise<boolean> {
   const state = await LiveActivity.getActivityState(activityId)
   if (state === "active" || state === "stale") {
     const activity = await LiveActivity.from(activityId, ACTIVITY_NAME)
-    await activity.end(makeClockState(), { dismissTimeInterval: 0 })
+    if (activity != null) {
+      await activity.end(makeClockState(), { dismissTimeInterval: 0 })
+    }
   }
   Storage.remove(ACTIVITY_ID_KEY)
   return true
@@ -106,7 +97,7 @@ async function run(): Promise<void> {
       const confirmed = await Dialog.confirm({
         title: "启动灵动岛时间？",
         message:
-          "时间由 iOS 系统自动走秒，脚本启动后即可退出。跨过午夜后请重新运行脚本刷新日期和时间。",
+          "窄版计时从 00:00 开始，由 iOS 系统自动走秒。脚本启动后即可退出。",
         cancelLabel: "取消",
         confirmLabel: "启动",
       })
