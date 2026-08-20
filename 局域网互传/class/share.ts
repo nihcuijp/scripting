@@ -28,6 +28,8 @@ type ClientInfo = { name: string; address: string }
 
 const TRUSTED_DEVICES_KEY = "lan-transfer.trustedDevices"
 const MAX_TRUSTED_DEVICES = 20
+const HEARTBEAT_INTERVAL = 5_000
+const HEARTBEAT_TIMEOUT = 15_000
 
 function tokenHash(token: string): string {
   const data = Data.fromString(token)
@@ -86,6 +88,8 @@ export class Share {
   private trustedDevices: TrustedDevice[] = []
   private authorizedClients = new Map<string, ClientInfo>()
   private sessionClients = new Map<WebSocketSession, ClientInfo>()
+  private sessionLastSeen = new Map<WebSocketSession, number>()
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
   private listener: ((e: AppEvent) => void) | null = null
   private activityStateListener: (() => void) | null = null
   private online = false
@@ -363,15 +367,37 @@ export class Share {
         }, 5_000)
       },
       onDisconnected: (session) => {
-        const client = this.sessionClients.get(session)
-        this.sessionClients.delete(session)
-        this.sessions = this.sessions.filter((s) => s !== session)
-        this.notifyActivityStateChanged()
-        if (client) this.emitConnection(false, client)
-        if (this.sessions.length === 0) this.setOnline(false, client)
+        this.removeSession(session)
       },
       handleText: (session, text) => this.handlePacket(session, text),
     })
+    this.scheduleHeartbeatSweep()
+  }
+
+  private removeSession(session: WebSocketSession) {
+    const client = this.sessionClients.get(session)
+    const connected = this.sessions.indexOf(session) >= 0
+    this.sessionClients.delete(session)
+    this.sessionLastSeen.delete(session)
+    this.sessions = this.sessions.filter((item) => item !== session)
+    if (!connected && !client) return
+    this.notifyActivityStateChanged()
+    if (client) this.emitConnection(false, client)
+    if (this.sessions.length === 0) this.setOnline(false, client)
+  }
+
+  private scheduleHeartbeatSweep() {
+    this.heartbeatTimer = setTimeout(() => {
+      this.heartbeatTimer = null
+      if (!this.started) return
+      const cutoff = Date.now() - HEARTBEAT_TIMEOUT
+      for (const session of [...this.sessions]) {
+        if ((this.sessionLastSeen.get(session) ?? 0) >= cutoff) continue
+        try { session.close() } catch {}
+        this.removeSession(session)
+      }
+      this.scheduleHeartbeatSweep()
+    }, HEARTBEAT_INTERVAL)
   }
 
   private handlePacket(session: WebSocketSession, raw: string) {
@@ -391,6 +417,7 @@ export class Share {
       }
       this.sessions.push(session)
       this.sessionClients.set(session, client)
+      this.sessionLastSeen.set(session, Date.now())
       session.writeText(JSON.stringify({ type: "auth_ok" }))
       // 补发本次运行期已注册的文件，使稍后连接的浏览器也能看到并下载。
       for (const packet of this.outgoingFiles) session.writeText(JSON.stringify(packet))
@@ -399,6 +426,8 @@ export class Share {
       void this.flushPendingFiles()
       return
     }
+    this.sessionLastSeen.set(session, Date.now())
+    if (packet.type === "ping") return
     if (packet.type === "text") {
       if (typeof packet.text !== "string" || packet.text.length === 0) return
       const text = packet.text.slice(0, 100_000)
@@ -640,6 +669,8 @@ export class Share {
   }
 
   stop() {
+    if (this.heartbeatTimer != null) clearTimeout(this.heartbeatTimer)
+    this.heartbeatTimer = null
     this.server.stop()
     this.sessions = []
     this.downloads.clear()
@@ -648,6 +679,7 @@ export class Share {
     this.pairAttempts.clear()
     this.authorizedClients.clear()
     this.sessionClients.clear()
+    this.sessionLastSeen.clear()
     this.inbox = []
     this.online = false
     this.lastClient = null

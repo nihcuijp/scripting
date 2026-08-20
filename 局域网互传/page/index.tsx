@@ -155,7 +155,7 @@ export function ChatPage() {
         <HStack spacing={6} padding={{ horizontal: 14, top: 8, bottom: 6 }}>
           <Image systemName={online.value ? "circle.fill" : "circle"} foregroundStyle={online.value ? "systemGreen" : "tertiaryLabel"} font={10} />
           <Text font={13} foregroundStyle="secondaryLabel">{online.value ? "浏览器已连接" : "等待浏览器配对…"}</Text>
-          <Text font={13} fontWeight="semibold" foregroundStyle="primaryLabel" frame={{ maxWidth: Infinity }} multilineTextAlignment="trailing">配对码 {share.pairingCode}</Text>
+          <Text font={13} fontWeight="semibold" foregroundStyle="label" frame={{ maxWidth: Infinity }} multilineTextAlignment="trailing">配对码 {share.pairingCode}</Text>
         </HStack>
         <ScrollViewReader>
           {(proxy) => {

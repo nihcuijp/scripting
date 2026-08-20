@@ -15,11 +15,6 @@
     "ru": ""
   },
   "permissions": null,
-  "author": {
-    "email": null,
-    "homepage": "https://github.com/Keywos",
-    "name": "Keywos"
-  },
   "remoteResource": null,
   "intentInputTypes": [
     "FileURLs",
@@ -36,15 +31,8 @@
     "zh": "",
     "ru": ""
   },
-  "version": "3.1.4",
-  "name": "局域网文件传输",
+  "version": "3.1.5",
+  "name": "局域网互传",
   "color": "rgba(0, 198, 165,1)",
-  "icon": "document.badge.arrow.up",
-  "contributors": [
-    {
-      "name": "Waa",
-      "homepage": "https://github.com/iamwaa",
-      "email": null
-    }
-  ]
+  "icon": "document.badge.arrow.up"
 }

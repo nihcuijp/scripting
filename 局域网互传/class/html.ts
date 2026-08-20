@@ -122,7 +122,14 @@ function addMessage(m){
   wrap.scrollIntoView({ behavior: 'smooth' });
 }
 
-var ws = null, reconnectTimer = null, wsAuthenticated = false;
+var ws = null, reconnectTimer = null, heartbeatTimer = null, wsAuthenticated = false;
+function stopHeartbeat(){ if (heartbeatTimer){ clearInterval(heartbeatTimer); heartbeatTimer = null; } }
+function startHeartbeat(){
+  stopHeartbeat();
+  heartbeatTimer = setInterval(function(){
+    if (wsAuthenticated && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+  }, 5000);
+}
 function connect(){
   if (!authToken || !clientId) return;
   wsAuthenticated = false;
@@ -130,6 +137,7 @@ function connect(){
   catch (e){ scheduleReconnect(); return; }
   ws.onopen = function(){ ws.send(JSON.stringify({ type: 'auth', token: authToken, clientId: clientId })); };
   ws.onclose = function(){
+    stopHeartbeat();
     var wasAuthenticated = wsAuthenticated;
     wsAuthenticated = false;
     setStatus(false);
@@ -144,7 +152,7 @@ function setStatus(on){ statusEl.textContent = on ? '● 已连接到设备' : '
 
 function handleIncoming(raw){
   var p; try { p = JSON.parse(raw); } catch (e){ return; }
-  if (p.type === 'auth_ok'){ wsAuthenticated = true; setStatus(true); }
+  if (p.type === 'auth_ok'){ wsAuthenticated = true; startHeartbeat(); setStatus(true); }
   else if (p.type === 'auth_error'){
     resumeTrusted(true);
   }
@@ -159,6 +167,8 @@ function handleIncoming(raw){
     addMessage({ role: 'app', kind: 'file', fileName: p.fileName, fileSize: p.fileSize, mime: p.mime, url: location.origin + p.url });
   }
 }
+
+window.addEventListener('pagehide', function(){ stopHeartbeat(); if (ws) try { ws.close(); } catch (e){} });
 
 pairInput.addEventListener('input', function(){ pairInput.value = pairInput.value.replace(/\\D/g, '').slice(0, 6); pairError.textContent = ''; });
 pairForm.onsubmit = function(e){

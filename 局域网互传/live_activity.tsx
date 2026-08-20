@@ -9,6 +9,7 @@ import {
   LiveActivityUIExpandedTrailing,
   Spacer,
   Text,
+  TimerIntervalLabel,
   VStack,
 } from "scripting"
 
@@ -16,6 +17,9 @@ export const TRANSFER_ACTIVITY_NAME = "LanTransferActivity"
 
 export type TransferActivityState = {
   online: boolean
+  networkType: "wifi" | "cellular" | "offline"
+  clockBase: number
+  clockEnd: number
   address: string
   pairingCode: string
   deviceCount: number
@@ -43,6 +47,11 @@ function StatusIcon({ online }: { online: boolean }) {
   return <Image systemName={online ? "link.circle.fill" : "wifi"} foregroundStyle={online ? "systemGreen" : "systemBlue"} />
 }
 
+function NetworkIcon({ type }: { type: TransferActivityState["networkType"] }) {
+  const systemName = type === "cellular" ? "cellularbars" : type === "wifi" ? "wifi" : "wifi.slash"
+  return <Image systemName={systemName} font={12} foregroundStyle={type === "offline" ? "secondaryLabel" : "systemBlue"} />
+}
+
 function LockScreenContent(state: TransferActivityState) {
   const connected = state.deviceCount > 0
   return (
@@ -65,8 +74,26 @@ function LockScreenContent(state: TransferActivityState) {
 const builder: LiveActivityUIBuilder<TransferActivityState> = state => (
   <LiveActivityUI
     content={<LockScreenContent {...state} />}
-    compactLeading={<StatusIcon online={state.deviceCount > 0} />}
-    compactTrailing={<Text font="caption" fontWeight="semibold">{state.deviceCount > 0 ? `${state.deviceCount}台` : "等待"}</Text>}
+    compactLeading={
+      <HStack spacing={3}>
+        <NetworkIcon type={state.networkType} />
+        <Text font={12} fontWeight="semibold">
+          {state.deviceCount > 0 ? `${state.deviceCount}台` : "等待"}
+        </Text>
+      </HStack>
+    }
+    compactTrailing={
+      <TimerIntervalLabel
+        from={new Date(state.clockBase)}
+        to={new Date(state.clockEnd)}
+        countsDown={false}
+        showsHours
+        font={12}
+        monospacedDigit
+        lineLimit={1}
+        frame={{ width: 55, alignment: "center" }}
+      />
+    }
     minimal={<StatusIcon online={state.deviceCount > 0} />}>
     <LiveActivityUIExpandedLeading>
       <HStack spacing={7}>
