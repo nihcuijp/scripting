@@ -6,15 +6,33 @@ import {
 } from "./live_activity"
 
 const ACTIVITY_ID_KEY = "islandClock.activityId"
+const WEEKDAYS = [
+  "周日",
+  "周一",
+  "周二",
+  "周三",
+  "周四",
+  "周五",
+  "周六",
+] as const
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "发生未知错误。"
 }
 
 function makeClockState(now = new Date()): ClockState {
+  const dayStart = new Date(now)
+  dayStart.setHours(0, 0, 0, 0)
+
+  const dayEnd = new Date(dayStart)
+  dayEnd.setDate(dayEnd.getDate() + 1)
+
   return {
-    startedAt: now.getTime(),
-    endsAt: now.getTime() + 24 * 60 * 60 * 1000,
+    startedAt: dayStart.getTime(),
+    endsAt: dayEnd.getTime(),
+    weekdayText: WEEKDAYS[now.getDay()],
+    dateText: `${now.getMonth() + 1}月${now.getDate()}日`,
+    compactDateText: `${now.getMonth() + 1}/${now.getDate()}`,
   }
 }
 
@@ -97,7 +115,7 @@ async function run(): Promise<void> {
       const confirmed = await Dialog.confirm({
         title: "启动灵动岛时间？",
         message:
-          "窄版计时从 00:00 开始，由 iOS 系统自动走秒。脚本启动后即可退出。",
+          "当前时间由 iOS 系统自动走秒。脚本启动后即可退出，跨过午夜后请重新启动。",
         cancelLabel: "取消",
         confirmLabel: "启动",
       })
@@ -105,7 +123,7 @@ async function run(): Promise<void> {
         await startClock()
         await showSuccess(
           "已启动",
-          "请退出 Scripting 查看灵动岛；长按灵动岛可查看展开样式。"
+          "请退出 Scripting 查看灵动岛。"
         )
       }
       return
